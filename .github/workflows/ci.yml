@@ -18,3 +18,5 @@ jobs:
       - run: npm run demo -- --deny
       - run: npm run demo:agents -- --deny
       - run: npm run registry
+      - run: printf 'support-bot\nAnswers tickets\nyes\nyes\nyes\nyes\n500\n50\nno\n\nyes\n' | npm run setup -- --no-ai
+      - run: npx tsx src/cli.ts registry --config examples/my-actlatch.yaml

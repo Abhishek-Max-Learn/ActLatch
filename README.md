@@ -44,7 +44,7 @@ Everything is written to a tamper-evident audit log.
 
 ```bash
 npm install
-npm test            # 52 tests
+npm test            # 63 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
@@ -129,6 +129,19 @@ AGENT report-bot - Writes a weekly summary; read-only
 Anyone not registered above: blocked from every tool.
 Tools no agent can use: helpdesk.delete_customer
 ```
+
+### Guided setup: answer questions instead of writing rules
+
+Whoever built the agents knows best what each one should do. `actlatch setup` connects to your servers, finds their tools, and asks plain questions for each agent and tool ("Should support-bot use refund_order? yes / ask / no", "Above what amount should a human approve first?"). The answers become the `agents:` section, and the registry table is shown for a final yes before anything is saved.
+
+```bash
+npm run setup     # example: examples/servers.yaml -> examples/my-actlatch.yaml
+# or: actlatch setup --config servers.yaml [--out actlatch.yaml] [--no-ai]
+```
+
+- **Uses the LLM your app already has.** With `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` already in the environment (or `ACTLATCH_LLM_URL` / `_KEY` / `_MODEL` for any OpenAI-compatible API such as Azure, Gemini, Groq or a local Ollama), the LLM reads each tool's name, description and fields and writes questions that fit that tool, with suggested answers. With no key, fixed questions based on the tool's fields are used.
+- **The LLM only drafts questions.** It never decides anything: questions about fields that don't exist are dropped, every answer comes from the person, and the result is a fixed file. While agents run, no LLM is involved in decisions.
+- **Admin only.** Setup is a command run on the machine that holds the gateway's config, by whoever manages it. Agents connect over MCP and only ever see the gateway's tools, so they have no way to run setup or change the result, and the config is frozen once the gateway starts.
 
 ### Checking against real values (lookups)
 

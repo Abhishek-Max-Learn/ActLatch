@@ -5,3 +5,4 @@ export * from "./audit.js";
 export * from "./approval.js";
 export * from "./gateway.js";
 export * from "./registry.js";
+export * from "./setup.js";

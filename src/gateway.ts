@@ -183,19 +183,28 @@ export async function connectUpstreams(config: Config): Promise<Map<string, Conn
   return map;
 }
 
-/** Ask every configured server which tools it has. A server that fails is reported, not fatal. */
-export async function discoverTools(config: Config): Promise<Discovered> {
-  const found: Discovered = new Map();
+/** Ask every configured server for its full tool list. A server that fails is reported, not fatal. */
+export async function discoverToolDetails(config: Config): Promise<Map<string, Tool[] | Error>> {
+  const found = new Map<string, Tool[] | Error>();
   for (const [name, up] of Object.entries(config.upstreams)) {
     let conn: ConnectedUpstream | undefined;
     try {
       conn = await connectUpstream(name, up);
-      found.set(name, (await conn.client.listTools()).tools.map((t) => t.name));
+      found.set(name, (await conn.client.listTools()).tools);
     } catch (err) {
       found.set(name, err instanceof Error ? err : new Error(String(err)));
     } finally {
       await conn?.client.close();
     }
+  }
+  return found;
+}
+
+/** Ask every configured server which tools it has, by name. */
+export async function discoverTools(config: Config): Promise<Discovered> {
+  const found: Discovered = new Map();
+  for (const [name, tools] of await discoverToolDetails(config)) {
+    found.set(name, tools instanceof Error ? tools : tools.map((t) => t.name));
   }
   return found;
 }
