@@ -7,6 +7,8 @@
     "build": "tsc",
     "start": "tsx src/cli.ts start",
     "demo": "tsx examples/demo.ts",
+    "demo:agents": "tsx examples/agents-demo.ts",
+    "registry": "tsx src/cli.ts registry --config examples/agents.yaml",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

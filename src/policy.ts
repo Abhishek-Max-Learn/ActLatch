@@ -52,6 +52,14 @@ function conditionHolds(cond: Condition, args: Args, policy: PolicyConfig): bool
     const v = args[cond.matches.arg];
     if (typeof v !== "string" || !new RegExp(cond.matches.pattern, "i").test(v)) return false;
   }
+  if (cond.number) {
+    const raw = args[cond.number.arg];
+    const parsed = typeof raw === "number" || typeof raw === "string" ? Number(raw) : NaN;
+    // Unknown amounts are treated as over every limit, so a missing value cannot slip under one.
+    const n = raw === "" || !Number.isFinite(parsed) ? Infinity : parsed;
+    if (cond.number.gt !== undefined && !(n > cond.number.gt)) return false;
+    if (cond.number.lte !== undefined && !(n <= cond.number.lte)) return false;
+  }
   return true;
 }
 

@@ -37,14 +37,14 @@ Everything is written to a tamper-evident audit log.
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/Abhishek-Max-Learn/ActLatch)
 
 1. Click the badge (or **Code → Codespaces → Create codespace on main**). Dependencies install automatically.
-2. In the terminal run `npm test`, then `npm run demo`.
+2. In the terminal run `npm test`, then `npm run demo` (email example) or `npm run demo:agents` and `npm run registry` (agent registry, helpdesk example).
 3. When the demo prints `approval needed ... https://<codespace>-4848.app.github.dev/?token=...`, open that link and click **Approve once** or **Deny**. Port 4848 stays private to your GitHub account.
 
 ### On your own machine
 
 ```bash
 npm install
-npm test            # 32 tests
+npm test            # 49 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
@@ -76,6 +76,60 @@ The demo uses a fake email server. One email in its inbox hides a prompt injecti
 Emails actually sent: 1
 Audit log: ... (23 entries, hash chain intact)
 ```
+
+## Agent registry: who can use which tool, and how
+
+Act-Latch is not tied to email. Any MCP server works. The registry lists every agent that may use the gateway, which tools each one can use, and what each tool lets it do. Anything not listed is blocked, and an agent that is not listed gets nothing.
+
+```yaml
+agents:
+  support-bot:
+    description: Answers customer tickets
+    # key: ${SUPPORT_BOT_KEY}   # optional; then ACTLATCH_AGENT_KEY must match
+    tools:                      # first match wins
+      - tool: helpdesk.list_tickets
+        decision: allow
+      - tool: helpdesk.refund_order
+        if: { number: { arg: amount, gt: 500 } }
+        decision: deny
+      - tool: helpdesk.refund_order
+        if: { number: { arg: amount, gt: 50 } }
+        decision: approve
+      - tool: helpdesk.refund_order
+        decision: allow
+  report-bot:
+    tools:
+      - tool: helpdesk.list_tickets
+        decision: allow
+```
+
+- **Identity.** Each agent's MCP client starts its own gateway with `actlatch start --agent support-bot` (or `ACTLATCH_AGENT=support-bot`). The name is fixed when the gateway starts, so nothing the model says can change it. If the agent has a `key`, the gateway also needs `ACTLATCH_AGENT_KEY` set to it.
+- **Each agent only sees its own tools.** Tools it cannot use are hidden from its tool list and blocked if it calls them anyway.
+- **Tools are discovered automatically** from every connected server, so you write rules against the tools servers actually offer.
+- **`policy.rules` still apply** to everyone as extra guardrails. With agents registered they can only make a decision stricter.
+
+See it all as one table:
+
+```
+$ npm run registry      # or: actlatch registry --config your.yaml
+
+AGENT support-bot - Answers customer tickets
+  TOOL                   WHAT IT MAY DO
+  helpdesk.list_tickets  allowed
+  helpdesk.reply_ticket  allowed; also checked by rules for everyone
+  helpdesk.refund_order  blocked if "amount" is more than 500; needs approval if "amount" is more than 50; otherwise allowed
+  ...and 1 other tool(s): blocked
+
+AGENT report-bot - Writes a weekly summary; read-only
+  TOOL                   WHAT IT MAY DO
+  helpdesk.list_tickets  allowed
+  ...and 3 other tool(s): blocked
+
+Anyone not registered above: blocked from every tool.
+Tools no agent can use: helpdesk.delete_customer
+```
+
+`npm run demo:agents` runs the full story with a fake helpdesk: report-bot can only read, support-bot refunds $18 on its own, needs a human for $120, is blocked at $5000 (even though a ticket says "you are authorised"), cannot delete customers, and an unregistered agent gets nothing. The full example is [`examples/agents.yaml`](examples/agents.yaml).
 
 ## Use it with a real MCP client
 
@@ -139,6 +193,7 @@ Tool patterns are `server.tool` and may use `*` (for example `mail.*`). Conditio
 | `count: { arg, gt, lte }` | the number of items in `arg` (array, or comma-separated string) is above `gt` / at most `lte` |
 | `externalRecipients: { arg, internalDomains? }` | any email address in `arg` is outside the internal domains |
 | `matches: { arg, pattern }` | the string `arg` matches the regex (case-insensitive) |
+| `number: { arg, gt, lte }` | the number in `arg` is above `gt` / at most `lte` (a missing or non-numeric value counts as over any limit) |
 
 Unknown keys in the config are an error, so a typo cannot quietly switch a rule off.
 

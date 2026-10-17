@@ -10,8 +10,9 @@ import {
 import { actionHash, type AuditLog } from "./audit.js";
 import type { Config, Upstream } from "./config.js";
 import type { Approver } from "./approval.js";
-import { applyTaint, evaluate, type Args } from "./policy.js";
+import { applyTaint, type Args } from "./policy.js";
 import { buildPreview } from "./preview.js";
+import { canSee, decide, identityProblem, type Discovered, type Identity } from "./registry.js";
 
 export interface ConnectedUpstream {
   name: string;
@@ -25,13 +26,21 @@ const SEP = "__";
 export class Gateway {
   /** Upstream servers whose output this session has read. Only ever grows. */
   private readonly tainted = new Set<string>();
+  /** Registered agent this gateway serves, if the registry is in use. */
+  readonly agent?: string;
+  /** Why the caller is not accepted (unregistered, wrong key). Every call is then blocked. */
+  readonly identityError?: string;
 
   constructor(
     private readonly config: Config,
     private readonly upstreams: Map<string, ConnectedUpstream>,
     private readonly approver: Approver,
     private readonly audit: AuditLog,
-  ) {}
+    identity: Identity = {},
+  ) {
+    this.agent = identity.agent;
+    this.identityError = identityProblem(config, identity);
+  }
 
   get taintedBy(): string[] {
     return [...this.tainted];
@@ -39,9 +48,11 @@ export class Gateway {
 
   async listTools(): Promise<Tool[]> {
     const out: Tool[] = [];
+    if (this.identityError) return out;
     for (const up of this.upstreams.values()) {
       const { tools } = await up.client.listTools();
       for (const t of tools) {
+        if (!canSee(this.config, this.agent, `${up.name}.${t.name}`)) continue;
         out.push({ ...t, name: `${up.name}${SEP}${t.name}`, description: `[via Act-Latch] ${t.description ?? ""}`.trim() });
       }
     }
@@ -54,17 +65,19 @@ export class Gateway {
     const toolName = idx > 0 ? exposedName.slice(idx + SEP.length) : exposedName;
     const tool = `${server}.${toolName}`;
     const hash = actionHash(tool, args);
-    this.audit.write({ event: "call", tool, actionHash: hash, args });
+    this.audit.write({ event: "call", tool, actionHash: hash, agent: this.agent, args });
 
+    if (this.identityError) return this.block(tool, hash, this.identityError);
     const up = this.upstreams.get(server);
     if (!up) return this.block(tool, hash, `unknown tool ${exposedName}`);
 
-    const policyVerdict = evaluate(this.config.policy, tool, args);
+    const policyVerdict = decide(this.config, this.agent, tool, args);
     const verdict = applyTaint(this.config.policy, tool, policyVerdict, this.taintedBy);
     this.audit.write({
       event: "decision",
       tool,
       actionHash: hash,
+      agent: this.agent,
       decision: verdict.decision,
       reason: verdict.reason,
       policyDecision: policyVerdict.decision,
@@ -75,6 +88,7 @@ export class Gateway {
 
     if (verdict.decision === "approve") {
       const preview = buildPreview(tool, args, this.config.policy.internalDomains);
+      if (this.agent) preview.summary.unshift(`Requested by agent "${this.agent}".`);
       const { id, outcome } = await this.approver.request({ actionHash: hash, reason: verdict.reason, preview });
       this.audit.write({ event: "approval", tool, actionHash: hash, approvalId: id, outcome });
       if (outcome !== "approved") {
@@ -116,20 +130,40 @@ export class Gateway {
   }
 }
 
-/** Spawn each configured upstream. Credentials go only into the upstream's env. */
+/** Spawn one upstream server. Credentials go only into its env. */
+export async function connectUpstream(name: string, up: Upstream): Promise<ConnectedUpstream> {
+  const transport = new StdioClientTransport({
+    command: up.command,
+    args: [...up.args],
+    env: { ...getDefaultEnvironment(), ...up.env },
+    cwd: up.cwd,
+    stderr: "inherit",
+  });
+  const client = new Client({ name: "actlatch", version: "0.1.0" });
+  await client.connect(transport);
+  return { name, trust: up.trust, client };
+}
+
+/** Spawn each configured upstream. */
 export async function connectUpstreams(config: Config): Promise<Map<string, ConnectedUpstream>> {
   const map = new Map<string, ConnectedUpstream>();
-  for (const [name, up] of Object.entries(config.upstreams)) {
-    const transport = new StdioClientTransport({
-      command: up.command,
-      args: [...up.args],
-      env: { ...getDefaultEnvironment(), ...up.env },
-      cwd: up.cwd,
-      stderr: "inherit",
-    });
-    const client = new Client({ name: "actlatch", version: "0.1.0" });
-    await client.connect(transport);
-    map.set(name, { name, trust: up.trust, client });
-  }
+  for (const [name, up] of Object.entries(config.upstreams)) map.set(name, await connectUpstream(name, up));
   return map;
+}
+
+/** Ask every configured server which tools it has. A server that fails is reported, not fatal. */
+export async function discoverTools(config: Config): Promise<Discovered> {
+  const found: Discovered = new Map();
+  for (const [name, up] of Object.entries(config.upstreams)) {
+    let conn: ConnectedUpstream | undefined;
+    try {
+      conn = await connectUpstream(name, up);
+      found.set(name, (await conn.client.listTools()).tools.map((t) => t.name));
+    } catch (err) {
+      found.set(name, err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      await conn?.client.close();
+    }
+  }
+  return found;
 }

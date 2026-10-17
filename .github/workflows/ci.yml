@@ -16,3 +16,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run demo -- --deny
+      - run: npm run demo:agents -- --deny
+      - run: npm run registry
