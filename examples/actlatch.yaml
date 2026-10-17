@@ -1,0 +1,50 @@
+# Act-Latch example config. Paths are relative to this file.
+
+upstreams:
+  mail:
+    command: npx
+    args: [tsx, mock-email-server.ts]
+    cwd: .
+    env:
+      # The real credential lives only here, in the gateway's environment.
+      MAIL_API_KEY: ${MAIL_API_KEY}
+    # Email content comes from strangers, so treat it as untrusted.
+    trust: untrusted
+
+policy:
+  # Anything not matched below is blocked.
+  default: deny
+  internalDomains: [acme.com]
+
+  # First matching rule wins.
+  rules:
+    - tool: mail.read_inbox
+      decision: allow
+    - tool: mail.draft_email
+      decision: allow
+      reason: Drafts are safe; nothing leaves the building.
+    - tool: mail.send_email
+      if: { count: { arg: to, gt: 50 } }
+      decision: deny
+      reason: Sending to more than 50 people is never done by the agent.
+    - tool: mail.send_email
+      if: { count: { arg: to, gt: 5 } }
+      decision: approve
+      reason: Sending to more than 5 people needs a human.
+    - tool: mail.send_email
+      if: { externalRecipients: { arg: to } }
+      decision: approve
+      reason: Email to someone outside acme.com needs a human.
+    - tool: mail.send_email
+      decision: allow
+
+  # After the agent has read untrusted content (e.g. an email), these tools
+  # always need a human, even where the rules above would allow them.
+  protectAfterUntrusted: [mail.send_email]
+
+approval:
+  port: 4848
+  timeoutSeconds: 300
+
+audit:
+  path: ../actlatch-audit.jsonl
