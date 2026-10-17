@@ -24,12 +24,20 @@ agents:
     tools:
       - tool: helpdesk.list_tickets
         decision: allow
+      - tool: helpdesk.get_order
+        decision: allow
       - tool: helpdesk.reply_ticket
         decision: allow
       - tool: helpdesk.refund_order
         if: { number: { arg: amount, gt: 500 } }
         decision: deny
         reason: Refunds over $500 are never done by an agent.
+      # order.price is the real price, looked up by Act-Latch (see lookups below),
+      # not a number the agent or the customer typed. $5 of slack is allowed.
+      - tool: helpdesk.refund_order
+        if: { number: { arg: amount, gt: { fact: order.price, plus: 5 } } }
+        decision: approve
+        reason: Refund is more than the order's real price; a human must decide.
       - tool: helpdesk.refund_order
         if: { number: { arg: amount, gt: 50 } }
         decision: approve
@@ -43,6 +51,14 @@ agents:
     tools:
       - tool: helpdesk.list_tickets
         decision: allow
+
+# Before deciding on a refund, Act-Latch itself asks the helpdesk for the real
+# order (using the order_id the agent gave) and calls the answer "order".
+lookups:
+  - tool: helpdesk.refund_order
+    call: helpdesk.get_order
+    args: { order_id: order_id }
+    as: order
 
 # Optional extra rules for everyone. When agents are registered these can only
 # make a decision stricter, never looser.

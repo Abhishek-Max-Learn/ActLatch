@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
-import type { Condition, Config, Decision, Rule } from "./config.js";
-import { evaluate, globMatch, stricter, type Args, type Verdict } from "./policy.js";
+import type { Condition, Config, Decision, Limit, Rule } from "./config.js";
+import { evaluate, globMatch, stricter, type Args, type Facts, type Verdict } from "./policy.js";
 
 /** Who is calling, as established when the gateway started. */
 export interface Identity {
@@ -30,14 +30,14 @@ export function identityProblem(config: Config, id: Identity): string | undefine
  * Decide one call for one agent. The agent's own tool list decides first
  * (unlisted means deny); global policy rules that match can only tighten it.
  */
-export function decide(config: Config, agent: string | undefined, tool: string, args: Args): Verdict {
-  if (!config.agents) return evaluate(config.policy, tool, args);
+export function decide(config: Config, agent: string | undefined, tool: string, args: Args, facts: Facts = {}): Verdict {
+  if (!config.agents) return evaluate(config.policy, tool, args, facts);
   const entry = agent && Object.hasOwn(config.agents, agent) ? config.agents[agent] : undefined;
   if (!entry) return { decision: "deny", reason: agent ? `agent "${agent}" is not registered` : "unknown agent" };
 
-  const own = evaluate({ ...config.policy, default: "deny", rules: entry.tools }, tool, args);
+  const own = evaluate({ ...config.policy, default: "deny", rules: entry.tools }, tool, args, facts);
   const verdict = own.rule === undefined ? { decision: "deny" as const, reason: `${tool} is not in ${agent}'s tool list` } : own;
-  const guard = evaluate({ ...config.policy, default: "allow" }, tool, args);
+  const guard = evaluate({ ...config.policy, default: "allow" }, tool, args, facts);
   return guard.rule === undefined ? verdict : stricter(verdict, guard);
 }
 
@@ -54,9 +54,10 @@ const WORDS: Record<Decision, string> = { allow: "allowed", approve: "needs appr
 
 export function describeCondition(c: Condition): string {
   const parts: string[] = [];
-  const range = (what: string, gt?: number, lte?: number) => {
-    if (gt !== undefined) parts.push(`${what} is more than ${gt}`);
-    if (lte !== undefined) parts.push(`${what} is at most ${lte}`);
+  const lim = (l: Limit) => (typeof l === "number" ? String(l) : l.plus ? `${l.fact} + ${l.plus}` : l.fact);
+  const range = (what: string, gt?: Limit, lte?: Limit) => {
+    if (gt !== undefined) parts.push(`${what} is more than ${lim(gt)}`);
+    if (lte !== undefined) parts.push(`${what} is at most ${lim(lte)}`);
   };
   if (c.count) range(`number of items in "${c.count.arg}"`, c.count.gt, c.count.lte);
   if (c.number) range(`"${c.number.arg}"`, c.number.gt, c.number.lte);
@@ -99,11 +100,16 @@ export function renderRegistry(config: Config, discovered: Discovered): string {
   }
   const taintNote = (tool: string) =>
     config.policy.protectAfterUntrusted.some((p) => globMatch(p, tool)) ? "; needs approval after reading untrusted content" : "";
+  const lookupNote = (tool: string) =>
+    config.lookups
+      .filter((l) => globMatch(l.tool, tool))
+      .map((l) => `; checks real ${l.as} via ${l.call}`)
+      .join("");
   const guardNote = (tool: string) => (config.policy.rules.some((r) => globMatch(r.tool, tool)) ? "; also checked by rules for everyone" : "");
 
   if (!config.agents) {
     out.push("No agents registered: every caller gets the same global policy.", "");
-    out.push(...table(allTools.map((t) => [t, describeAccess(config.policy.rules, t, config.policy.default) + taintNote(t)])));
+    out.push(...table(allTools.map((t) => [t, describeAccess(config.policy.rules, t, config.policy.default) + lookupNote(t) + taintNote(t)])));
     return out.join("\n");
   }
 
@@ -113,7 +119,7 @@ export function renderRegistry(config: Config, discovered: Discovered): string {
     const visible = allTools.filter((t) => canSee(config, name, t));
     visible.forEach((t) => usable.add(t));
     if (visible.length === 0) out.push("  (no tools)");
-    else out.push(...table(visible.map((t) => [t, describeAccess(agent.tools, t) + taintNote(t) + guardNote(t)])));
+    else out.push(...table(visible.map((t) => [t, describeAccess(agent.tools, t) + lookupNote(t) + taintNote(t) + guardNote(t)])));
     const hidden = allTools.length - visible.length;
     if (hidden > 0) out.push(`  ...and ${hidden} other tool(s): blocked`);
   }

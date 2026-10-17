@@ -10,7 +10,7 @@ import {
 import { actionHash, type AuditLog } from "./audit.js";
 import type { Config, Upstream } from "./config.js";
 import type { Approver } from "./approval.js";
-import { applyTaint, type Args } from "./policy.js";
+import { applyTaint, globMatch, type Args, type Facts } from "./policy.js";
 import { buildPreview } from "./preview.js";
 import { canSee, decide, identityProblem, type Discovered, type Identity } from "./registry.js";
 
@@ -71,7 +71,8 @@ export class Gateway {
     const up = this.upstreams.get(server);
     if (!up) return this.block(tool, hash, `unknown tool ${exposedName}`);
 
-    const policyVerdict = decide(this.config, this.agent, tool, args);
+    const facts = await this.lookup(tool, args, hash);
+    const policyVerdict = decide(this.config, this.agent, tool, args, facts);
     const verdict = applyTaint(this.config.policy, tool, policyVerdict, this.taintedBy);
     this.audit.write({
       event: "decision",
@@ -88,6 +89,10 @@ export class Gateway {
 
     if (verdict.decision === "approve") {
       const preview = buildPreview(tool, args, this.config.policy.internalDomains);
+      for (const [name, value] of Object.entries(facts)) {
+        const text = JSON.stringify(value);
+        preview.summary.push(`Real ${name} (looked up by Act-Latch): ${text.length > 160 ? text.slice(0, 157) + "..." : text}`);
+      }
       if (this.agent) preview.summary.unshift(`Requested by agent "${this.agent}".`);
       const { id, outcome } = await this.approver.request({ actionHash: hash, reason: verdict.reason, preview });
       this.audit.write({ event: "approval", tool, actionHash: hash, approvalId: id, outcome });
@@ -109,6 +114,33 @@ export class Gateway {
       this.audit.write({ event: "error", tool, actionHash: hash, message });
       return { isError: true, content: [{ type: "text", text: `Act-Latch: upstream error: ${message}` }] };
     }
+  }
+
+  /**
+   * Run the configured lookups for this tool: the gateway itself asks a trusted
+   * tool for the real values (e.g. an order's price). A lookup that fails leaves
+   * its fact missing, which rules treat as over any limit.
+   */
+  private async lookup(tool: string, args: Args, hash: string): Promise<Facts> {
+    const facts: Facts = {};
+    for (const lk of this.config.lookups) {
+      if (!globMatch(lk.tool, tool)) continue;
+      const dot = lk.call.indexOf(".");
+      const up = this.upstreams.get(lk.call.slice(0, dot));
+      const lookupArgs = Object.fromEntries(Object.entries(lk.args).map(([k, from]) => [k, args[from]]));
+      try {
+        if (dot <= 0 || !up) throw new Error(`no server for ${lk.call}`);
+        const r = (await up.client.callTool({ name: lk.call.slice(dot + 1), arguments: lookupArgs })) as CallToolResult;
+        if (r.isError) throw new Error("lookup tool returned an error");
+        const first = r.content.find((c) => c.type === "text");
+        facts[lk.as] = r.structuredContent ?? JSON.parse(first && first.type === "text" ? first.text : "");
+        this.audit.write({ event: "lookup", tool, actionHash: hash, call: lk.call, as: lk.as, ok: true, value: facts[lk.as] });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.audit.write({ event: "lookup", tool, actionHash: hash, call: lk.call, as: lk.as, ok: false, message });
+      }
+    }
+    return facts;
   }
 
   private block(tool: string, hash: string, reason: string): CallToolResult {

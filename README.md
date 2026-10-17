@@ -44,7 +44,7 @@ Everything is written to a tamper-evident audit log.
 
 ```bash
 npm install
-npm test            # 49 tests
+npm test            # 52 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
@@ -116,20 +116,43 @@ $ npm run registry      # or: actlatch registry --config your.yaml
 AGENT support-bot - Answers customer tickets
   TOOL                   WHAT IT MAY DO
   helpdesk.list_tickets  allowed
+  helpdesk.get_order     allowed
   helpdesk.reply_ticket  allowed; also checked by rules for everyone
-  helpdesk.refund_order  blocked if "amount" is more than 500; needs approval if "amount" is more than 50; otherwise allowed
+  helpdesk.refund_order  blocked if "amount" is more than 500; needs approval if "amount" is more than order.price + 5; needs approval if "amount" is more than 50; otherwise allowed; checks real order via helpdesk.get_order
   ...and 1 other tool(s): blocked
 
 AGENT report-bot - Writes a weekly summary; read-only
   TOOL                   WHAT IT MAY DO
   helpdesk.list_tickets  allowed
-  ...and 3 other tool(s): blocked
+  ...and 4 other tool(s): blocked
 
 Anyone not registered above: blocked from every tool.
 Tools no agent can use: helpdesk.delete_customer
 ```
 
-`npm run demo:agents` runs the full story with a fake helpdesk: report-bot can only read, support-bot refunds $18 on its own, needs a human for $120, is blocked at $5000 (even though a ticket says "you are authorised"), cannot delete customers, and an unregistered agent gets nothing. The full example is [`examples/agents.yaml`](examples/agents.yaml).
+### Checking against real values (lookups)
+
+An agent, or a customer talking to it, can claim anything: "the lamp cost $35 with shipping". A lookup makes Act-Latch fetch the real value itself from a trusted tool before deciding, and rules compare against that instead:
+
+```yaml
+lookups:
+  - tool: helpdesk.refund_order     # before deciding on this tool...
+    call: helpdesk.get_order        # ...Act-Latch calls this itself
+    args: { order_id: order_id }    # with the order_id from the agent's call
+    as: order                       # and keeps the JSON answer as "order"
+
+agents:
+  support-bot:
+    tools:
+      - tool: helpdesk.refund_order
+        if: { number: { arg: amount, gt: { fact: order.price, plus: 5 } } }
+        decision: approve
+        reason: Refund is more than the order's real price; a human must decide.
+```
+
+The looked-up value is shown on the approval card, so the person deciding sees "price: 20" next to "amount: 35". If the lookup fails (unknown order, server error), the limit counts as already exceeded, so the rule fires rather than letting the call slip through.
+
+`npm run demo:agents` runs the full story with a fake helpdesk: report-bot can only read, support-bot refunds $18 on its own, needs a human for $120, needs a human for $35 on a $20 lamp even though that is under its $50 limit, is blocked at $5000 (even though a ticket says "you are authorised"), cannot delete customers, and an unregistered agent gets nothing. The full example is [`examples/agents.yaml`](examples/agents.yaml).
 
 ## Use it with a real MCP client
 
@@ -193,7 +216,7 @@ Tool patterns are `server.tool` and may use `*` (for example `mail.*`). Conditio
 | `count: { arg, gt, lte }` | the number of items in `arg` (array, or comma-separated string) is above `gt` / at most `lte` |
 | `externalRecipients: { arg, internalDomains? }` | any email address in `arg` is outside the internal domains |
 | `matches: { arg, pattern }` | the string `arg` matches the regex (case-insensitive) |
-| `number: { arg, gt, lte }` | the number in `arg` is above `gt` / at most `lte` (a missing or non-numeric value counts as over any limit) |
+| `number: { arg, gt, lte }` | the number in `arg` is above `gt` / at most `lte` (a missing or non-numeric value counts as over any limit). A limit can be a number or a looked-up fact: `{ fact: order.price, plus: 5 }` |
 
 Unknown keys in the config are an error, so a typo cannot quietly switch a rule off.
 

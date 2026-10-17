@@ -22,7 +22,7 @@ export function actionHash(tool: string, args: unknown): string {
 }
 
 export interface AuditEvent {
-  event: "call" | "decision" | "approval" | "forwarded" | "blocked" | "error" | "untrusted_output";
+  event: "call" | "decision" | "approval" | "forwarded" | "blocked" | "error" | "untrusted_output" | "lookup";
   tool?: string;
   actionHash?: string;
   [k: string]: unknown;
