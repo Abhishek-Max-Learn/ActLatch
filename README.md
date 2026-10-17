@@ -32,9 +32,19 @@ Everything is written to a tamper-evident audit log.
 
 ## Quick start
 
+### In GitHub Codespaces (nothing to install)
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/Abhishek-Max-Learn/ActLatch)
+
+1. Click the badge (or **Code → Codespaces → Create codespace on main**). Dependencies install automatically.
+2. In the terminal run `npm test`, then `npm run demo`.
+3. When the demo prints `approval needed ... https://<codespace>-4848.app.github.dev/?token=...`, open that link and click **Approve once** or **Deny**. Port 4848 stays private to your GitHub account.
+
+### On your own machine
+
 ```bash
 npm install
-npm test            # 31 tests
+npm test            # 32 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
