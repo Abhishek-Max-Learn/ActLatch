@@ -1,0 +1,20 @@
+{
+  "name": "Act-Latch",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "postCreateCommand": "npm ci",
+  "forwardPorts": [4848],
+  "portsAttributes": {
+    "4848": {
+      "label": "Act-Latch approvals",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["vitest.explorer", "redhat.vscode-yaml"]
+    },
+    "codespaces": {
+      "openFiles": ["README.md", "examples/actlatch.yaml"]
+    }
+  }
+}

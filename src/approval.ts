@@ -43,13 +43,21 @@ export class WebApprover implements Approver {
     return `http://${this.opts.host}:${port}/?token=${this.token}`;
   }
 
+  /** The link to open in a browser. Inside GitHub Codespaces this is the forwarded port's URL. */
+  get browserUrl(): string {
+    const { CODESPACE_NAME: name, GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: domain } = process.env;
+    if (!name || !domain) return this.url;
+    const port = new URL(this.url).port;
+    return `https://${name}-${port}.${domain}/?token=${this.token}`;
+  }
+
   async start(): Promise<void> {
     this.server = createServer((req, res) => this.handle(req, res));
     await new Promise<void>((ok, fail) => {
       this.server!.once("error", fail);
       this.server!.listen(this.opts.port, this.opts.host, ok);
     });
-    this.log(`[actlatch] approvals: ${this.url}`);
+    this.log(`[actlatch] approvals: ${this.browserUrl}`);
   }
 
   async stop(): Promise<void> {
@@ -88,7 +96,7 @@ export class WebApprover implements Approver {
         timer,
         resolve: (outcome) => resolve({ id, outcome }),
       });
-      this.log(`[actlatch] approval needed for ${req.preview.tool}: ${this.url}`);
+      this.log(`[actlatch] approval needed for ${req.preview.tool}: ${this.browserUrl}`);
     });
   }
 

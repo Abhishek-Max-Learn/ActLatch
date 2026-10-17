@@ -169,6 +169,21 @@ describe("web approver", () => {
     expect(approver.list()).toHaveLength(0);
   });
 
+  it("links to the forwarded port inside Codespaces", async () => {
+    approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 10 }, () => {});
+    await approver.start();
+    const port = new URL(approver.url).port;
+    expect(approver.browserUrl).toBe(approver.url);
+    process.env.CODESPACE_NAME = "my-space";
+    process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN = "app.github.dev";
+    try {
+      expect(approver.browserUrl).toBe(`https://my-space-${port}.app.github.dev/?token=${approver.token}`);
+    } finally {
+      delete process.env.CODESPACE_NAME;
+      delete process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN;
+    }
+  });
+
   it("times out", async () => {
     approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 0.05 }, () => {});
     await approver.start();

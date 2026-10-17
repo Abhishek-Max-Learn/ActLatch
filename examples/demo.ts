@@ -29,7 +29,7 @@ const config = parseConfig({
     ],
     protectAfterUntrusted: ["mail.send_email"],
   },
-  approval: { host: "127.0.0.1", port: 0, timeoutSeconds: 120 },
+  approval: { host: "127.0.0.1", port: Number(process.env.ACTLATCH_PORT ?? 4848), timeoutSeconds: 120 },
   audit: { path: auditPath },
 });
 
