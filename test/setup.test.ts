@@ -9,8 +9,10 @@ import {
   checkDraft,
   parseAccess,
   parseLimit,
+  parsePicks,
   pickDrafter,
   runSetup,
+  toAgentName,
   toSetupTool,
   type Draft,
 } from "../src/setup.js";
@@ -126,6 +128,24 @@ describe("LLM-drafted questions", () => {
 });
 
 describe("runSetup", () => {
+  it("cleans up agent names and reads tool picks", () => {
+    expect(toAgentName("Database agent ")).toBe("database-agent");
+    expect(toAgentName("!!!")).toBe("");
+    expect([parsePicks("1, 3", 3), parsePicks("", 3), parsePicks("all", 2), parsePicks("4", 3), parsePicks("x", 3)]).toEqual([
+      [0, 2],
+      [],
+      [0, 1],
+      "invalid",
+      "invalid",
+    ]);
+  });
+
+  it("blocks tools that were not picked", async () => {
+    const { ask } = script(["reader", "reads", "1", "", "", "yes"]);
+    const result = (await runSetup({ raw, tools, ask, say: () => {} })) as Record<string, any>;
+    expect(result.agents.reader.tools).toEqual([{ tool: "helpdesk.list_tickets", decision: "allow" }]);
+  });
+
   const script = (answers: string[]) => {
     const asked: string[] = [];
     return { asked, ask: async (q: string) => (asked.push(q), answers.shift() ?? "") };
@@ -138,7 +158,7 @@ describe("runSetup", () => {
 
   it("builds the registry from answers and shows it before saving", async () => {
     const said: string[] = [];
-    const { ask } = script(["support-bot", "Answers tickets", "", "yes", "500", "", "", "yes"]);
+    const { ask } = script(["Support Bot", "Answers tickets", "1, 2", "", "yes", "500", "", "", "yes"]);
     const result = (await runSetup({ raw, tools, ask, say: (l) => said.push(l) })) as Record<string, any>;
     expect(result.upstreams.helpdesk.env.KEY).toBe("${HELPDESK_KEY}"); // secrets stay as references
     expect(result.agents["support-bot"].tools.map((r: { decision: string }) => r.decision)).toEqual(["allow", "deny", "allow"]);
@@ -148,13 +168,14 @@ describe("runSetup", () => {
   });
 
   it("re-asks unclear answers and saves nothing without a yes", async () => {
-    const { ask, asked } = script(["bad name!", "bot", "", "maybe", "no", "no", "", "no"]);
+    const { ask, asked } = script(["!!!", "bot", "", "7", "all", "maybe", "no", "no", "", "no"]);
     expect(await runSetup({ raw, tools, ask, say: () => {} })).toBeUndefined();
     expect(asked.some((q) => q.includes("Please answer yes, ask or no"))).toBe(true);
+    expect(asked.some((q) => q.includes("Please type numbers from 1 to 2"))).toBe(true);
   });
 
   it("uses drafted questions when given a drafter", async () => {
-    const { ask, asked } = script(["bot", "d", "", "", "", "yes"]);
+    const { ask, asked } = script(["bot", "d", "1,2", "", "", "", "yes"]);
     const draft = async () => [{ kind: "access" as const, text: "Custom question?", suggested: "yes" }];
     await runSetup({ raw, tools, ask, say: () => {}, draft });
     expect(asked.filter((q) => q.includes("Custom question?"))).toHaveLength(2);

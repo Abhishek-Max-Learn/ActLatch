@@ -58,7 +58,7 @@ const FIELD_KIND: Record<Exclude<QuestionKind, "access">, (t?: string) => boolea
 export function accessQuestion(agent: string, tool: SetupTool, text?: string, suggested?: string): Question {
   return {
     kind: "access",
-    text: text ?? `Should ${agent} use ${tool.id}${tool.description ? ` (${tool.description.replace(/\.$/, "")})` : ""}?`,
+    text: text ?? `Can ${agent} use ${tool.id} on its own?`,
     suggested: suggested ?? (RISKY.test(tool.id) ? "ask" : "yes"),
   };
 }
@@ -287,6 +287,28 @@ export interface SetupOptions {
   draft?: Drafter;
 }
 
+/** "Database agent" -> "database-agent". Empty when nothing usable is left. */
+export function toAgentName(typed: string): string {
+  return typed
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9_-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/** "1, 3" -> [0, 2]; "" -> []; "all" -> every index. */
+export function parsePicks(answer: string, count: number): number[] | "invalid" {
+  const a = answer.trim().toLowerCase();
+  if (a === "" || a === "none") return [];
+  if (a === "all") return [...Array(count).keys()];
+  const parts = a.split(/[\s,]+/).filter(Boolean);
+  const nums = parts.map(Number);
+  if (nums.some((n) => !Number.isInteger(n) || n < 1 || n > count)) return "invalid";
+  return [...new Set(nums.map((n) => n - 1))].sort((x, y) => x - y);
+}
+
 /** Run the question-and-answer setup. Returns the new config, or undefined if not confirmed. */
 export async function runSetup(opts: SetupOptions): Promise<Record<string, unknown> | undefined> {
   const { ask, say } = opts;
@@ -300,30 +322,39 @@ export async function runSetup(opts: SetupOptions): Promise<Record<string, unkno
     return undefined;
   }
   say(`Found ${tools.length} tool(s): ${tools.map((t) => t.id).join(", ")}`);
-  say("Answer each question; press Enter to accept the suggestion in [brackets].");
+  say("Press Enter to accept the suggestion in [brackets].");
 
   const agents: Record<string, { description?: string; tools: Rule[] }> = {};
+  const list = tools.map((t, i) => `  ${i + 1}. ${t.id}${t.description ? ` - ${t.description.replace(/\.$/, "")}` : ""}`).join("\n");
   for (;;) {
-    const name = (await ask("\nAgent name (letters, digits, - or _), or Enter to finish:")).trim();
-    if (name === "") {
+    const typed = (await ask("\nAgent name (Enter when you have added all agents):")).trim();
+    if (typed === "") {
       if (Object.keys(agents).length > 0) break;
       say("Add at least one agent.");
       continue;
     }
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      say("Use only letters, digits, - and _.");
+    const name = toAgentName(typed);
+    if (!name) {
+      say("Please use some letters or digits in the name.");
       continue;
     }
+    if (name !== typed) say(`(saved as "${name}")`);
     const description = (await ask(`What does ${name} do, in one line?`)).trim();
+
+    say(`\nTools found:\n${list}`);
+    let picked = parsePicks(await ask(`Which tools may ${name} use? Type their numbers, e.g. 1,3 (Enter for none, "all" for all):`), tools.length);
+    while (picked === "invalid") picked = parsePicks(await ask(`Please type numbers from 1 to ${tools.length}, like 1,3:`), tools.length);
+
     const rules: Rule[] = [];
-    for (const tool of tools) {
+    for (const i of picked) {
+      const tool = tools[i]!;
       const questions = opts.draft ? await opts.draft(name, description, tool) : basicQuestions(name, tool);
-      say(`\n- ${tool.id}`);
+      say(`\n${tool.id}`);
       const answers: { q: Question; answer: string }[] = [];
       for (const q of questions) {
         const access = parseAccess(answers[0]?.answer ?? "");
         if (access === "ask" && q.kind.startsWith("approve")) continue; // every use is approved anyway
-        const hint = q.kind === "access" ? " (yes / ask / no)" : "";
+        const hint = q.kind === "access" ? " (yes = on its own / ask = a human approves each time / no)" : "";
         let answer = await ask(`  ${q.text}${hint} [${q.suggested || "no limit"}]`);
         if (answer.trim() === "") answer = q.suggested;
         if (q.kind === "access") {
@@ -337,6 +368,7 @@ export async function runSetup(opts: SetupOptions): Promise<Record<string, unkno
       rules.push(...answersToRules(tool.id, answers));
     }
     agents[name] = { ...(description ? { description } : {}), tools: rules };
+    say(`${name}: ${picked.length} tool(s) set up; every other tool is blocked for it.`);
   }
 
   const result = { ...opts.raw, agents };
