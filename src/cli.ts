@@ -41,7 +41,6 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "start") {
     const config = loadConfig(flag(rest, "--config") ?? "actlatch.yaml");
     const approver = new WebApprover(config.approval);
-    approver.activity = () => summarizeAudit(readAuditEntries(config.audit.path));
     await approver.start();
     const identity = { agent: flag(rest, "--agent") ?? process.env.ACTLATCH_AGENT, key: process.env.ACTLATCH_AGENT_KEY };
     const gateway = new Gateway(config, await connectUpstreams(config), approver, new AuditLog(config.audit.path), identity);

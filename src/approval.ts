@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { resultWords, type Activity } from "./activity.js";
 import type { Preview } from "./preview.js";
 
 export type ApprovalOutcome = "approved" | "denied" | "timeout";
@@ -44,8 +43,6 @@ export class WebApprover implements Approver {
   private readonly pending = new Map<string, Pending>();
   private server?: Server;
   private lastSeen = 0; // when an open page last checked in
-  /** Recent calls to show under "What happened" on the page, oldest first. */
-  activity?: () => Activity[];
 
   constructor(
     private readonly opts: ApprovalOptions,
@@ -155,12 +152,6 @@ export class WebApprover implements Approver {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(this.list()));
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/activity") {
-      const rows = (this.activity?.() ?? []).slice(-50).reverse();
-      const body = rows.map((r) => ({ ...r, args: undefined, resultText: resultWords(r.result) }));
-      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
-      return;
-    }
     if (req.method === "POST" && url.pathname === "/api/closed") {
       this.lastSeen = 0; // the tab was closed: open a new one for the next request
       res.writeHead(204).end();
@@ -232,8 +223,6 @@ details{margin-top:12px;color:var(--soft);font-size:14px}pre{background:var(--bg
 .empty{color:var(--soft);text-align:center;padding:40px 0}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 16px;overflow:auto;z-index:9}
 .done{background:var(--card);border:2px solid var(--ok);border-radius:14px;padding:16px 18px;margin:14px 0;font-weight:600}.done.no{border-color:var(--no)}.done p{font-weight:400;color:var(--soft);margin:4px 0 0}
-table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--soft);font-weight:600;font-size:12px;text-transform:uppercase}
-.r-allowed,.r-approved{color:var(--ok)}.r-blocked,.r-denied,.r-timed{color:var(--no)}.why2{color:var(--soft);font-size:13px}
 .overlay .card{max-width:640px;width:100%;margin:0;box-shadow:0 20px 50px rgba(0,0,0,.35)}.overlay[hidden]{display:none}
 </style></head><body><main>
 <h1>Act-Latch approvals</h1>
@@ -241,10 +230,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <div class="bar"><span class="pill" id="status">Connecting...</span><button class="link" id="alerts" hidden>Turn on pop-up alerts</button></div>
 <div id="done"></div>
 <div id="list"></div>
-<p class="note">New requests pop up here by themselves. If nobody answers in time, the action is blocked. You can close this tab: it opens again when a person is needed.</p>
-<h2 style="font-size:18px;margin:28px 0 8px">What happened</h2>
-<p class="sub">Every call an agent made, newest first. Act-Latch keeps the full record in its audit log.</p>
-<div id="activity"><p class="empty">No calls yet.</p></div>
+<p class="note">New requests pop up here by themselves. If nobody answers in time, the action is blocked. You can close this tab: it opens again when a person is needed. To see every past call, run <code>npm run log</code> (or <code>actlatch log</code>).</p>
 </main><div class="overlay" id="overlay" hidden></div>
 <script>
 const token = new URLSearchParams(location.search).get("token");
@@ -286,27 +272,15 @@ async function decide(id, what) {
     setTimeout(() => { if (!items.length) window.close(); }, 4000);
   }
 }
-function activity(rows) {
-  const box = document.getElementById("activity");
-  if (!rows.length) { box.replaceChildren(el("p", "empty", "No calls yet.")); return; }
-  const t = el("table"), head = el("tr");
-  for (const h of ["When", "Agent", "Wanted to", "Result"]) head.append(el("th", "", h));
-  t.append(head);
-  for (const r of rows) {
-    const tr = el("tr"), res = el("td", "r-" + r.result.split(" ")[0], r.resultText);
-    if (r.reason && r.result !== "allowed") res.append(el("div", "why2", r.reason));
-    tr.append(el("td", "", new Date(r.time).toLocaleTimeString()), el("td", "", r.agent || "-"), el("td", "", r.action), res);
-    t.append(tr);
-  }
-  box.replaceChildren(t);
-}
 function render() {
-  listEl.replaceChildren(...(items.length ? items.map(card) : [el("p", "empty", "Nothing waiting right now.")]));
   document.title = items.length ? "(" + items.length + ") Approval needed - Act-Latch" : "Act-Latch approvals";
   const fresh = items.find((r) => !seen.has(r.id));
   items.forEach((r) => seen.add(r.id));
   if (popped && !items.some((r) => r.id === popped)) { popped = null; overlay.hidden = true; }
   if (fresh && !popped) popup(fresh);
+  // The request in the pop-up is not shown again behind it.
+  const rest = items.filter((r) => r.id !== popped);
+  listEl.replaceChildren(...(rest.length ? rest.map(card) : popped ? [] : [el("p", "empty", "Nothing waiting right now.")]));
 }
 function popup(r) {
   popped = r.id; overlay.replaceChildren(card(r)); overlay.hidden = false; beep();
@@ -324,7 +298,6 @@ async function poll() {
     if (!res.ok) throw new Error();
     items = await res.json(); base = Date.now();
     if (items.length) document.getElementById("done").replaceChildren();
-    fetch("/api/activity?token=" + token, { cache: "no-store" }).then((a) => a.json()).then(activity).catch(() => {});
     statusEl.textContent = items.length ? items.length + " waiting for you" : "Watching for requests";
     render();
   } catch (e) { statusEl.textContent = "Act-Latch is not running. Start it again and open the new link."; }

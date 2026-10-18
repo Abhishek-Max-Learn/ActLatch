@@ -28,7 +28,7 @@ Everything is written to a tamper-evident audit log.
 - **Injected text cannot grant permissions.** The policy is loaded once and frozen; no tool exists that changes it. On top of that, once the agent has read output from an `untrusted` server (an inbox, a web page), the tools listed in `protectAfterUntrusted` always need a human, even if the policy would normally allow them. This check can only tighten a decision, never loosen it.
 - **Approval covers one exact action.** Each approval is for one call, recorded with a SHA-256 hash of the tool and its exact arguments. A different recipient list is a different action and needs its own approval.
 - **The agent cannot approve itself.** The approval page listens on localhost only, and every request needs a random token printed at startup.
-- **Audit log you can check.** Each line in the JSON Lines log includes the hash of the line before it. `actlatch verify-audit` finds any edited or deleted line. `npm run log` (or `actlatch log --config your.yaml`) lists every call in plain words: who asked, what for, and whether it was allowed, blocked, approved, denied or timed out, and why. The approval page shows the same list under "What happened".
+- **Audit log you can check.** Each line in the JSON Lines log includes the hash of the line before it. `actlatch verify-audit` finds any edited or deleted line. `npm run log` (or `actlatch log --config your.yaml`) lists every call in plain words: who asked, what for, and whether it was allowed, blocked, approved, denied or timed out, and why.
 
 ## Quick start
 

@@ -5,7 +5,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readAuditEntries, summarizeAudit } from "../src/activity.js";
 import { WebApprover } from "../src/approval.js";
 import { AuditLog, verifyAudit } from "../src/audit.js";
 import { loadConfig, parseConfig } from "../src/config.js";
@@ -53,7 +52,6 @@ if (auto) {
   };
 }
 const audit = new AuditLog(auditPath);
-approver.activity = () => summarizeAudit(readAuditEntries(auditPath));
 const waitMs = (config.approval.timeoutSeconds + 30) * 1000;
 if (!auto) {
   console.log(`When a step needs a human, the approval page opens in your browser (or open the link printed below) and the request pops up there.`);
