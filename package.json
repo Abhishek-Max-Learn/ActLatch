@@ -27,7 +27,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=20"
@@ -46,13 +47,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Abhishek-Max-Learn/actlatch.git"
+    "url": "git+https://github.com/Abhishek-Max-Learn/ActLatch.git"
   },
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Abhishek-Max-Learn/actlatch/issues"
+    "url": "https://github.com/Abhishek-Max-Learn/ActLatch/issues"
   },
-  "homepage": "https://github.com/Abhishek-Max-Learn/actlatch#readme",
+  "homepage": "https://github.com/Abhishek-Max-Learn/ActLatch#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
