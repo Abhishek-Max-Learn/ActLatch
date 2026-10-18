@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,6 +14,12 @@ describe("audit log", () => {
     a.write({ event: "blocked", tool: "mail.send_email", reason: "too many" });
     new AuditLog(path).write({ event: "call", tool: "mail.read_inbox" });
     expect(verifyAudit(path)).toEqual({ ok: true, entries: 3 });
+  });
+
+  it.skipIf(process.platform === "win32")("creates the log readable by its owner only", () => {
+    const path = tmp();
+    new AuditLog(path).write({ event: "call", tool: "mail.send_email", args: { to: "a@acme.com" } });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   it("detects an edited entry", () => {

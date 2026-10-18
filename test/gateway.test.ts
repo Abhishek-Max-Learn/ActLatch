@@ -161,7 +161,11 @@ describe("web approver", () => {
     expect((await fetch(`${base.origin}/api/pending?token=wrong`)).status).toBe(403);
     expect(await (await fetch(`${base.origin}/`)).text()).toContain("missing its secret key"); // says what to do
 
-    const page = await (await fetch(approver.url)).text();
+    const res0 = await fetch(approver.url);
+    expect(res0.headers.get("x-frame-options")).toBe("DENY"); // cannot be hidden inside another site
+    expect(res0.headers.get("referrer-policy")).toBe("no-referrer"); // the secret link is not passed on
+    expect(res0.headers.get("content-security-policy")).toMatch(/script-src 'sha256-[^']+'/);
+    const page = await res0.text();
     expect(page).not.toContain("<b>x</b>"); // agent text is drawn by the page with textContent, never as HTML
     expect(page).not.toMatch(/innerHTML/);
 

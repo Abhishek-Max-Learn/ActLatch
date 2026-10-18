@@ -40,30 +40,51 @@ function escapeRe(s: string): string {
   return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Values in an argument as a list: arrays as-is, strings split on commas/semicolons. */
+/**
+ * Values in an argument as a list: arrays (nested ones too) and objects item by item,
+ * strings split on commas, semicolons and new lines.
+ */
 export function listValues(v: unknown): string[] {
-  if (Array.isArray(v)) return v.map(String);
-  if (typeof v === "string") return v.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(v)) return v.flatMap(listValues);
+  if (typeof v === "string") return v.split(/[,;\r\n]/).map((s) => s.trim()).filter(Boolean);
   if (v === undefined || v === null) return [];
+  if (typeof v === "object") return Object.values(v).flatMap(listValues);
   return [String(v)];
 }
 
-export function emailDomain(addr: string): string | undefined {
-  const m = /@([^\s>]+)>?\s*$/.exec(addr.trim());
-  return m?.[1]?.toLowerCase();
+/**
+ * Every email address in a piece of text, however they are separated
+ * ("a@x.com b@y.com", "Ann <a@x.com>"). Split, not one big regex, so huge
+ * input cannot make it slow.
+ */
+export function emailAddresses(text: string): string[] {
+  return text.split(/[\s,;<>"'()[\]]+/).filter((t) => t.includes("@"));
 }
 
+export function emailDomain(addr: string): string | undefined {
+  const last = emailAddresses(addr).at(-1);
+  const domain = last?.slice(last.lastIndexOf("@") + 1).toLowerCase();
+  return domain || undefined;
+}
+
+/** Values that hold no address at all, or any address outside the internal domains. */
 export function externalAddresses(values: string[], internalDomains: readonly string[]): string[] {
   const internal = internalDomains.map((d) => d.toLowerCase());
-  return values.filter((a) => {
-    const d = emailDomain(a);
-    return !d || !internal.includes(d);
+  return values.filter((v) => {
+    const found = emailAddresses(v);
+    return found.length === 0 || found.some((a) => !internal.includes(a.slice(a.lastIndexOf("@") + 1).toLowerCase()));
   });
 }
 
-function conditionHolds(cond: Condition, args: Args, policy: PolicyConfig, facts: Facts): boolean {
+/** How many items an argument holds: listed items, or the addresses in it if there are more. */
+export function countValues(v: unknown): number {
+  const items = listValues(v);
+  return Math.max(items.length, items.flatMap(emailAddresses).length);
+}
+
+function conditionHolds(rule: Rule, cond: Condition, args: Args, policy: PolicyConfig, facts: Facts): boolean {
   if (cond.count) {
-    const n = listValues(args[cond.count.arg]).length;
+    const n = countValues(args[cond.count.arg]);
     if (cond.count.gt !== undefined && !(n > cond.count.gt)) return false;
     if (cond.count.lte !== undefined && !(n <= cond.count.lte)) return false;
   }
@@ -72,8 +93,11 @@ function conditionHolds(cond: Condition, args: Args, policy: PolicyConfig, facts
     if (externalAddresses(listValues(args[cond.externalRecipients.arg]), domains).length === 0) return false;
   }
   if (cond.matches) {
+    // A list or object is checked as its JSON text, so wrapping a word in [ ] cannot dodge a
+    // deny or approve rule. An allow rule needs a plain string, so odd input never loosens it.
     const v = args[cond.matches.arg];
-    if (typeof v !== "string" || !new RegExp(cond.matches.pattern, "i").test(v)) return false;
+    const text = typeof v === "string" ? v : v === undefined || rule.decision === "allow" ? undefined : JSON.stringify(v);
+    if (text === undefined || !new RegExp(cond.matches.pattern, "i").test(text)) return false;
   }
   if (cond.number) {
     // Unknown values are treated as over every limit, and an unknown limit as already
@@ -93,7 +117,7 @@ function conditionHolds(cond: Condition, args: Args, policy: PolicyConfig, facts
 }
 
 function ruleMatches(rule: Rule, tool: string, args: Args, policy: PolicyConfig, facts: Facts): boolean {
-  return globMatch(rule.tool, tool) && (!rule.if || conditionHolds(rule.if, args, policy, facts));
+  return globMatch(rule.tool, tool) && (!rule.if || conditionHolds(rule, rule.if, args, policy, facts));
 }
 
 /** First matching rule wins; otherwise the policy default (deny unless configured). */
