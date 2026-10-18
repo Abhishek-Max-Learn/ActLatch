@@ -29,7 +29,7 @@ const config = parseConfig({
     ],
     protectAfterUntrusted: ["mail.send_email"],
   },
-  approval: { host: "127.0.0.1", port: Number(process.env.ACTLATCH_PORT ?? 4848), timeoutSeconds: 120 },
+  approval: { host: "127.0.0.1", port: Number(process.env.ACTLATCH_PORT ?? 4848), timeoutSeconds: 120, openBrowser: !auto },
   audit: { path: auditPath },
 });
 
@@ -79,7 +79,8 @@ async function step(label: string, name: string, args: Record<string, unknown>) 
 }
 
 if (!auto) {
-  console.log(`When a step needs a human, open the approval link above and click Approve once or Deny within ${config.approval.timeoutSeconds} seconds.`);
+  console.log(`When a step needs a human, the approval page opens in your browser (or open the link printed below) and the request pops up there.`);
+  console.log(`Click Approve once or Deny within ${config.approval.timeoutSeconds} seconds. Keep the tab open: later requests pop up in it by themselves.`);
   console.log("No answer in time counts as Deny. To skip clicking, run with -- --approve or -- --deny.\n");
 }
 console.log("Tools the agent sees:", (await agent.listTools()).tools.map((t) => t.name).join(", "));

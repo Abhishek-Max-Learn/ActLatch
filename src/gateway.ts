@@ -11,7 +11,8 @@ import { actionHash, type AuditLog } from "./audit.js";
 import type { Config, Upstream } from "./config.js";
 import type { Approver } from "./approval.js";
 import { applyTaint, globMatch, type Args, type Facts } from "./policy.js";
-import { buildPreview } from "./preview.js";
+import { buildPreview, factLines, humanize } from "./preview.js";
+import { toolProfile, type ToolProfile } from "./tools.js";
 import { canSee, decide, identityProblem, type Discovered, type Identity } from "./registry.js";
 
 export interface ConnectedUpstream {
@@ -94,6 +95,10 @@ export class Gateway {
         preview.summary.push(`Real ${name} (looked up by Act-Latch): ${text.length > 160 ? text.slice(0, 157) + "..." : text}`);
       }
       if (this.agent) preview.summary.unshift(`Requested by agent "${this.agent}".`);
+      const action = humanize(toolName);
+      preview.headline = `${this.agent ?? "The agent"} wants to ${action}${server ? ` (in ${server})` : ""}`;
+      preview.facts = factLines(facts);
+      preview.effect = describeEffect(toolProfile(this.config, tool, undefined, args));
       const { id, outcome } = await this.approver.request({ actionHash: hash, reason: verdict.reason, preview });
       this.audit.write({ event: "approval", tool, actionHash: hash, approvalId: id, outcome });
       if (outcome !== "approved") {
@@ -207,4 +212,20 @@ export async function discoverTools(config: Config): Promise<Discovered> {
     found.set(name, tools instanceof Error ? tools : tools.map((t) => t.name));
   }
   return found;
+}
+
+const EFFECTS = {
+  read: "Only reads data.",
+  write: "Creates or sends something new.",
+  update: "Changes existing data, such as money or records.",
+  delete: "Deletes data. This usually cannot be undone.",
+} as const;
+
+/** One sentence on what kind of action a tool is, for the approval card. */
+function describeEffect(p: ToolProfile): string {
+  const parts: string[] = [EFFECTS[p.access]];
+  if (p.external) parts.push("It can reach people or systems outside your app.");
+  if (p.sensitive) parts.push("It touches private data.");
+  if (p.agentArg) parts.push("It passes work to another agent.");
+  return parts.join(" ");
 }

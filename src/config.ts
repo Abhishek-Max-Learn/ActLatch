@@ -113,9 +113,11 @@ export const ConfigSchema = z
         host: z.string().default("127.0.0.1"),
         port: z.number().int().default(4848),
         timeoutSeconds: z.number().positive().default(300),
+        // Open the approval page in the browser when a decision is needed and it is not already open.
+        openBrowser: z.boolean().default(true),
       })
       .strict()
-      .default({ host: "127.0.0.1", port: 4848, timeoutSeconds: 300 }),
+      .default({ host: "127.0.0.1", port: 4848, timeoutSeconds: 300, openBrowser: true }),
     audit: z
       .object({ path: z.string().default("actlatch-audit.jsonl") })
       .strict()
