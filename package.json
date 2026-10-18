@@ -2,9 +2,39 @@
   "name": "actlatch",
   "version": "0.1.0",
   "description": "Act-Latch: an MCP gateway that checks every AI agent tool call against a policy before it happens.",
-  "main": "dist/src/index.js",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "agent-security",
+    "guardrails",
+    "human-in-the-loop",
+    "approval",
+    "audit-log"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "actlatch": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "tsx src/cli.ts start",
     "demo": "tsx examples/demo.ts",
     "demo:agents": "tsx examples/agents-demo.ts",
@@ -12,17 +42,18 @@
     "registry": "tsx src/cli.ts registry --config examples/agents.yaml",
     "setup": "tsx src/cli.ts setup --config examples/servers.yaml --out examples/my-actlatch.yaml",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Abhishek-Max-Learn/actlatch.git"
+    "url": "git+https://github.com/Abhishek-Max-Learn/ActLatch.git"
   },
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Abhishek-Max-Learn/actlatch/issues"
+    "url": "https://github.com/Abhishek-Max-Learn/ActLatch/issues"
   },
-  "homepage": "https://github.com/Abhishek-Max-Learn/actlatch#readme",
+  "homepage": "https://github.com/Abhishek-Max-Learn/ActLatch#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
@@ -33,10 +64,6 @@
     "@types/node": "^22.20.5",
     "tsx": "^4.23.15",
     "typescript": "5.9",
-    "vitest": "^3.2.7"
-  },
-  "type": "module",
-  "bin": {
-    "actlatch": "dist/src/cli.js"
+    "vitest": "^5.0.5"
   }
 }

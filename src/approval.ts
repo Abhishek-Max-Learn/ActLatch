@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Preview } from "./preview.js";
@@ -136,6 +136,7 @@ export class WebApprover implements Approver {
   }
 
   private handle(req: IncomingMessage, res: ServerResponse): void {
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname === "/favicon.ico") {
       res.writeHead(204).end();
@@ -311,3 +312,21 @@ overlay.onclick = (e) => { if (e.target === overlay) { overlay.hidden = true; po
 addEventListener("pagehide", () => navigator.sendBeacon("/api/closed?token=" + token));
 poll(); setInterval(poll, 2000);
 </script></body></html>`;
+
+// Only the page's own script may run, it cannot be shown inside another site's frame
+// (so nobody can trick a click on "Approve"), and the secret link is never sent on as a referrer.
+const SECURITY_HEADERS = {
+  "content-security-policy": [
+    "default-src 'none'",
+    `script-src 'sha256-${createHash("sha256").update(PAGE.split("<script>")[1]!.split("</script>")[0]!).digest("base64")}'`,
+    "style-src 'unsafe-inline'",
+    "connect-src 'self'",
+    "img-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join("; "),
+  "x-frame-options": "DENY",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+};

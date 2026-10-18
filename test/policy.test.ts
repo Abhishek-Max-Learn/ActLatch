@@ -51,6 +51,35 @@ describe("policy", () => {
     expect(evaluate(p, "mail.send_email", { to: ["a@acme.com"], body: "my PASSWORD is" }).decision).toBe("deny");
   });
 
+  it("cannot be dodged by how the agent writes the recipients", () => {
+    const send = (to: unknown) => evaluate(p, "mail.send_email", { to, body: "hi" }).decision;
+    expect(send(emails(60).join("\n"))).toBe("deny");
+    expect(send(emails(60).join(" "))).toBe("deny");
+    expect(send([emails(30), emails(30, "acme.com")])).toBe("deny"); // nested lists
+    expect(send({ a: emails(60) })).toBe("deny");
+    expect(send("b@gmail.com a@acme.com")).toBe("approve"); // an outside address hidden before an inside one
+    expect(send(["Ann <a@acme.com>, Bob <b@gmail.com>"])).toBe("approve");
+    expect(send("Ann Smith <a@acme.com>")).toBe("allow");
+  });
+
+  it("cannot be dodged by wrapping a blocked word in a list or object", () => {
+    expect(evaluate(p, "mail.send_email", { to: ["a@acme.com"], body: ["my password"] }).decision).toBe("deny");
+    expect(evaluate(p, "mail.send_email", { to: ["a@acme.com"], body: { text: "password" } }).decision).toBe("deny");
+    // An allow rule never gets looser: it only matches plain text.
+    const allowOnly = parseConfig({
+      upstreams: {},
+      policy: { rules: [{ tool: "t.x", if: { matches: { arg: "q", pattern: "ok" } }, decision: "allow" }] },
+    }).policy;
+    expect(evaluate(allowOnly, "t.x", { q: "ok" }).decision).toBe("allow");
+    expect(evaluate(allowOnly, "t.x", { q: ["ok"] }).decision).toBe("deny");
+  });
+
+  it("stays fast on huge hostile input", () => {
+    const start = Date.now();
+    evaluate(p, "mail.send_email", { to: "@".repeat(200_000) + " x", body: "hi" });
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
   it("is frozen after load", () => {
     expect(() => (p.rules as unknown[]).push({ tool: "*", decision: "allow" })).toThrow();
     expect(() => Object.assign(p, { default: "allow" })).toThrow();
