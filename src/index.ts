@@ -6,3 +6,5 @@ export * from "./approval.js";
 export * from "./gateway.js";
 export * from "./registry.js";
 export * from "./setup.js";
+export * from "./tools.js";
+export * from "./review.js";

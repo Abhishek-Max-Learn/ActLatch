@@ -8,8 +8,9 @@ import { parse, stringify } from "yaml";
 import { WebApprover } from "./approval.js";
 import { AuditLog, verifyAudit } from "./audit.js";
 import { loadConfig } from "./config.js";
-import { Gateway, connectUpstreams, discoverToolDetails, discoverTools } from "./gateway.js";
+import { Gateway, connectUpstreams, discoverToolDetails } from "./gateway.js";
 import { renderRegistry } from "./registry.js";
+import { readAudit, renderReview, reviewRegistry } from "./review.js";
 import { pickDrafter, runSetup } from "./setup.js";
 
 const USAGE = `usage:
@@ -18,6 +19,9 @@ const USAGE = `usage:
                                             (the agent's key, if it has one, comes from ACTLATCH_AGENT_KEY)
   actlatch registry [--config actlatch.yaml]
                                             show every agent, the tools it can use and what each allows
+  actlatch review [--config actlatch.yaml] [--audit actlatch-audit.jsonl]
+                                            point out risky setups: too much power, dangerous tool combinations,
+                                            agents that can get another agent to do what they cannot
   actlatch setup --config servers.yaml [--out actlatch.yaml] [--no-ai]
                                             answer questions about your agents and tools; writes the registry
                                             (uses Claude to tailor questions when an Anthropic key is set)
@@ -42,9 +46,13 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`[actlatch] gateway ready${who}; audit log at ${config.audit.path}\n`);
     return -1; // keep running
   }
-  if (cmd === "registry") {
+  if (cmd === "registry" || cmd === "review") {
     const config = loadConfig(flag(rest, "--config") ?? "actlatch.yaml");
-    console.log(renderRegistry(config, await discoverTools(config)));
+    const details = await discoverToolDetails(config);
+    const names = new Map([...details].map(([s, t]) => [s, t instanceof Error ? t : t.map((x) => x.name)] as const));
+    if (cmd === "registry") console.log(renderRegistry(config, names) + "\n");
+    const auditPath = flag(rest, "--audit");
+    console.log(renderReview(reviewRegistry({ config, tools: details, audit: auditPath ? readAudit(auditPath) : undefined })));
     return 0;
   }
   if (cmd === "setup") {

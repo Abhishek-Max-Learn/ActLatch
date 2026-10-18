@@ -69,9 +69,25 @@ const Agent = z
     key: z.string().optional(),
     // Same shape as policy rules; first match wins; anything not listed is denied.
     tools: z.array(Rule).default([]),
+    // Other agents this agent may message without a human approving each time.
+    talksTo: z.array(z.string()).default([]),
   })
   .strict();
 export type Agent = z.infer<typeof Agent>;
+
+export const AccessType = z.enum(["read", "write", "update", "delete"]);
+export type AccessType = z.infer<typeof AccessType>;
+
+// Facts about a tool that Act-Latch cannot always guess from its name.
+const ToolInfo = z
+  .object({
+    access: AccessType.optional(), // what the tool does to data
+    sensitive: z.boolean().optional(), // returns private data (customers, payments, records)
+    external: z.boolean().optional(), // sends something outside (email, web, a customer)
+    agentCall: z.object({ arg: z.string() }).strict().optional(), // messages another agent named in `arg`
+  })
+  .strict();
+export type ToolInfo = z.infer<typeof ToolInfo>;
 
 export const ConfigSchema = z
   .object({
@@ -90,6 +106,8 @@ export const ConfigSchema = z
     // gets only the tools in its entry; policy.rules then act as extra guardrails.
     agents: z.record(z.string().regex(/^[a-zA-Z0-9_-]+$/), Agent).optional(),
     lookups: z.array(Lookup).default([]),
+    // Per-tool facts, keyed by "server.tool" (globs allowed). Unset facts are guessed.
+    toolInfo: z.record(z.string(), ToolInfo).default({}),
     approval: z
       .object({
         host: z.string().default("127.0.0.1"),

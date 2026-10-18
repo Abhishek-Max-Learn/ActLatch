@@ -32,6 +32,7 @@ export function createHelpdeskServer() {
   const refunds: { order_id: string; amount: number }[] = [];
   const replies: { ticket_id: string; message: string }[] = [];
   const deleted: string[] = [];
+  const messages: { agent: string; message: string }[] = [];
   const server = new McpServer({ name: "mock-helpdesk", version: "0.1.0" });
 
   server.registerTool("list_tickets", { description: "List open support tickets." }, async () => ({
@@ -75,7 +76,16 @@ export function createHelpdeskServer() {
     },
   );
 
-  return { server, refunds, replies, deleted };
+  server.registerTool(
+    "ask_agent",
+    { description: "Pass a task or question to another agent.", inputSchema: { agent: z.string(), message: z.string() } },
+    async ({ agent, message }) => {
+      messages.push({ agent, message });
+      return { content: [{ type: "text", text: `Message passed to ${agent}.` }] };
+    },
+  );
+
+  return { server, refunds, replies, deleted, messages };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

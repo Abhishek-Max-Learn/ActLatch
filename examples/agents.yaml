@@ -44,13 +44,31 @@ agents:
         reason: Refunds over $50 need a human.
       - tool: helpdesk.refund_order
         decision: allow
+      - tool: helpdesk.ask_agent
+        decision: allow
       # delete_customer is not listed, so support-bot can never use it.
+    # support-bot may hand work to report-bot without asking. Messages to any
+    # other agent need a human's approval.
+    talksTo: [report-bot]
 
   report-bot:
     description: Writes a weekly summary; read-only
     tools:
       - tool: helpdesk.list_tickets
         decision: allow
+
+  admin-bot:
+    description: Cleans up closed accounts
+    tools:
+      - tool: helpdesk.delete_customer
+        decision: approve
+        reason: Deleting a customer always needs a human.
+
+# What each tool does. Act-Latch guesses this from tool names (read / write /
+# update / delete, private data, sends things out); set it here when the guess
+# is wrong. `npm run registry` shows the result.
+toolInfo:
+  helpdesk.list_tickets: { sensitive: true }   # tickets hold customer details
 
 # Before deciding on a refund, Act-Latch itself asks the helpdesk for the real
 # order (using the order_id the agent gave) and calls the answer "order".

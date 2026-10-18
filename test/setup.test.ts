@@ -164,7 +164,7 @@ describe("runSetup", () => {
     expect(result.agents["support-bot"].tools.map((r: { decision: string }) => r.decision)).toEqual(["allow", "deny", "allow"]);
     const shown = said.join("\n");
     expect(shown).toContain('could not reach server "crm"');
-    expect(shown).toMatch(/helpdesk\.refund_order +blocked if "amount" is more than 500; otherwise allowed/);
+    expect(shown).toMatch(/helpdesk\.refund_order +update +blocked if "amount" is more than 500; otherwise allowed/);
   });
 
   it("re-asks unclear answers and saves nothing without a yes", async () => {
