@@ -2,7 +2,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { ConfigSchema, type Rule } from "./config.js";
+import { ConfigSchema, type AccessType, type Rule } from "./config.js";
+import { guessAccess, isAgentTool } from "./tools.js";
+import { renderReview, reviewRegistry } from "./review.js";
 import { renderRegistry, type Discovered } from "./registry.js";
 
 /**
@@ -31,6 +33,7 @@ export interface Question {
 export interface SetupTool {
   id: string; // "server.tool"
   description?: string;
+  access: AccessType; // guessed: read / write / update / delete
   fields: Record<string, { type: string; description?: string }>;
 }
 
@@ -42,10 +45,9 @@ export function toSetupTool(server: string, tool: Tool): SetupTool {
     const t = Array.isArray(p.type) ? p.type.find((x) => x !== "null") : p.type;
     fields[name] = { type: typeof t === "string" ? t : "unknown", description: p.description };
   }
-  return { id: `${server}.${tool.name}`, description: tool.description, fields };
+  return { id: `${server}.${tool.name}`, description: tool.description, access: guessAccess(tool.name, tool.description, tool.annotations), fields };
 }
 
-const RISKY = /send|delete|remove|transfer|pay|refund|publish|post|write|update|create|cancel|drop/i;
 const isNumeric = (t?: string) => t === "number" || t === "integer";
 const FIELD_KIND: Record<Exclude<QuestionKind, "access">, (t?: string) => boolean> = {
   approve_above: isNumeric,
@@ -59,7 +61,7 @@ export function accessQuestion(agent: string, tool: SetupTool, text?: string, su
   return {
     kind: "access",
     text: text ?? `Can ${agent} use ${tool.id} on its own?`,
-    suggested: suggested ?? (RISKY.test(tool.id) ? "ask" : "yes"),
+    suggested: suggested ?? (tool.access === "read" ? "yes" : "ask"),
   };
 }
 
@@ -324,8 +326,8 @@ export async function runSetup(opts: SetupOptions): Promise<Record<string, unkno
   say(`Found ${tools.length} tool(s): ${tools.map((t) => t.id).join(", ")}`);
   say("Press Enter to accept the suggestion in [brackets].");
 
-  const agents: Record<string, { description?: string; tools: Rule[] }> = {};
-  const list = tools.map((t, i) => `  ${i + 1}. ${t.id}${t.description ? ` - ${t.description.replace(/\.$/, "")}` : ""}`).join("\n");
+  const agents: Record<string, { description?: string; tools: Rule[]; talksTo?: string[] }> = {};
+  const list = tools.map((t, i) => `  ${i + 1}. ${t.id} (${t.access})${t.description ? ` - ${t.description.replace(/\.$/, "")}` : ""}`).join("\n");
   for (;;) {
     const typed = (await ask("\nAgent name (Enter when you have added all agents):")).trim();
     if (typed === "") {
@@ -367,7 +369,15 @@ export async function runSetup(opts: SetupOptions): Promise<Record<string, unkno
       }
       rules.push(...answersToRules(tool.id, answers));
     }
-    agents[name] = { ...(description ? { description } : {}), tools: rules };
+    let talksTo: string[] = [];
+    if (picked.some((i) => isAgentTool(ConfigSchema.parse({ upstreams: {} }), tools[i]!.id))) {
+      const others = (await ask(`\nWhich agents may ${name} pass work to without a human approving each time? Names, comma-separated (Enter: always ask):`))
+        .split(",")
+        .map(toAgentName)
+        .filter(Boolean);
+      talksTo = [...new Set(others)];
+    }
+    agents[name] = { ...(description ? { description } : {}), tools: rules, ...(talksTo.length ? { talksTo } : {}) };
     say(`${name}: ${picked.length} tool(s) set up; every other tool is blocked for it.`);
   }
 
@@ -377,6 +387,7 @@ export async function runSetup(opts: SetupOptions): Promise<Record<string, unkno
   for (const [server, list] of opts.tools) discovered.set(server, list instanceof Error ? list : list.map((t) => t.name));
   say("\nHere is what each agent will be allowed to do:\n");
   say(renderRegistry(parsed, discovered));
+  say("\n" + renderReview(reviewRegistry({ config: parsed, tools: opts.tools })));
   const ok = parseAccess(await ask("\nSave this? (yes / no)"));
   return ok === "yes" ? result : undefined;
 }

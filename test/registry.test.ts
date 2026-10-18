@@ -135,7 +135,7 @@ describe("registry view", () => {
     );
     expect(text).toContain("AGENT support-bot - Answers tickets");
     expect(text).toContain("AGENT locked-bot [key required]");
-    expect(text).toMatch(/helpdesk\.refund_order +blocked if "amount" is more than 500/);
+    expect(text).toMatch(/helpdesk\.refund_order +update +blocked if "amount" is more than 500/);
     expect(text).toContain("checks real order via helpdesk.get_order");
     expect(text).toContain("could not reach server \"crm\"");
     expect(text).toContain("Anyone not registered above: blocked from every tool.");
@@ -156,13 +156,13 @@ describe("registry view", () => {
       },
     });
     const found = await discoverTools(cfg);
-    expect(found.get("helpdesk")).toEqual(["list_tickets", "get_order", "reply_ticket", "refund_order", "delete_customer"]);
+    expect(found.get("helpdesk")).toEqual(["list_tickets", "get_order", "reply_ticket", "refund_order", "delete_customer", "ask_agent"]);
     expect(found.get("broken")).toBeInstanceOf(Error);
   }, 30_000);
 
   it("loads the example registry", () => {
     const cfg = loadConfig("examples/agents.yaml");
-    expect(Object.keys(cfg.agents!)).toEqual(["support-bot", "report-bot"]);
+    expect(Object.keys(cfg.agents!)).toEqual(["support-bot", "report-bot", "admin-bot"]);
   });
 });
 

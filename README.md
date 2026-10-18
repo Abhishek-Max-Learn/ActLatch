@@ -44,7 +44,7 @@ Everything is written to a tamper-evident audit log.
 
 ```bash
 npm install
-npm test            # 63 tests
+npm test            # 77 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
@@ -142,6 +142,40 @@ npm run setup     # example: examples/servers.yaml -> examples/my-actlatch.yaml
 - **Uses the LLM your app already has.** With `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` already in the environment (or `ACTLATCH_LLM_URL` / `_KEY` / `_MODEL` for any OpenAI-compatible API such as Azure, Gemini, Groq or a local Ollama), the LLM reads each tool's name, description and fields and writes questions that fit that tool, with suggested answers. With no key, fixed questions based on the tool's fields are used.
 - **The LLM only drafts questions.** It never decides anything: questions about fields that don't exist are dropped, every answer comes from the person, and the result is a fixed file. While agents run, no LLM is involved in decisions.
 - **Admin only.** Setup is a command run on the machine that holds the gateway's config, by whoever manages it. Agents connect over MCP and only ever see the gateway's tools, so they have no way to run setup or change the result, and the config is frozen once the gateway starts.
+
+### Tool types, agent-to-agent messages and the security review
+
+**Tool types.** Every tool is shown as `read`, `write`, `update` or `delete`, guessed from its name and the hints MCP servers publish. Setup suggests "on its own" for reads and "ask first" for everything else. Correct a guess, or mark what Act-Latch cannot see, in `toolInfo`:
+
+```yaml
+toolInfo:
+  db.run_report:    { access: read, sensitive: true }   # returns private data
+  crm.notify:       { external: true }                  # sends things outside
+  crew.handover:    { agentCall: { arg: to } }          # passes work to the agent named in "to"
+```
+
+**Agent-to-agent messages.** A tool that passes work to another agent (guessed from names like `ask_agent` or `delegate`, or set with `agentCall`) needs a human's approval for each message by default, so one agent cannot quietly get another to use tools it was not given. A message to an unregistered agent is blocked. Pairs your app relies on can be allowed up front, so normal features keep working:
+
+```yaml
+agents:
+  support-bot:
+    talksTo: [report-bot]   # may hand work to report-bot without asking
+```
+
+**Security review.** `npm run registry` (or `actlatch review --config your.yaml`) ends with advice on setups no single rule shows:
+
+| Finding | Why it matters |
+|---|---|
+| can delete on its own | the most damaging action needs no human |
+| can read private or outside data and send things out on its own | together these are a data-leak path, even if each is harmless alone |
+| can message another agent that has tools it lacks | it could get those tools used through the other agent |
+| has blanket access (`server.*`) | more power than any one job needs |
+| can change records with no limit | an `update` tool allowed with no condition |
+| never used a tool (with `--audit actlatch-audit.jsonl`) | least privilege: remove what is not needed |
+
+The review only advises; it changes nothing.
+
+**About system prompts.** An LLM cannot be forced to obey its system prompt; a clever input can talk it out of almost anything. Act-Latch does not rely on that. Whatever the model decides, a call outside its permissions stops at the gateway. Safety rules in the prompt are a useful extra layer, not the lock.
 
 ### Checking against real values (lookups)
 

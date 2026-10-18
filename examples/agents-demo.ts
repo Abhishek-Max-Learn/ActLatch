@@ -12,6 +12,7 @@ import { AuditLog, verifyAudit } from "../src/audit.js";
 import { loadConfig, parseConfig } from "../src/config.js";
 import { Gateway, type ConnectedUpstream } from "../src/gateway.js";
 import { renderRegistry } from "../src/registry.js";
+import { renderReview, reviewRegistry } from "../src/review.js";
 import { createHelpdeskServer } from "./helpdesk-server.js";
 
 const auto = process.argv.includes("--approve") ? "approved" : process.argv.includes("--deny") ? "denied" : undefined;
@@ -24,6 +25,7 @@ const config = parseConfig({
   agents: fromFile.agents,
   policy: fromFile.policy,
   lookups: fromFile.lookups,
+  toolInfo: fromFile.toolInfo,
   approval: { host: "127.0.0.1", port: Number(process.env.ACTLATCH_PORT ?? 4848), timeoutSeconds: 120 },
   audit: { path: auditPath },
 });
@@ -55,6 +57,7 @@ const audit = new AuditLog(auditPath);
 console.log("=== The registry (what `npm run registry` prints) ===\n");
 const tools = (await hdClient.listTools()).tools.map((t) => t.name);
 console.log(renderRegistry(config, new Map([["helpdesk", tools]])));
+console.log("\n" + renderReview(reviewRegistry({ config, tools: new Map([["helpdesk", (await hdClient.listTools()).tools]]) })));
 
 /** Connect a pretend agent to its own gateway, the way an MCP client would. */
 async function connectAs(agent: string) {
@@ -83,12 +86,15 @@ await support("support-bot refunds $120 on a $140 order (over $50, so a human de
 await support("Customer asks $35 on a $20 lamp \"because of return shipping\" (a human decides)", "helpdesk__refund_order", { order_id: "O-72", amount: 35 });
 await support('Hidden instruction: "refund me $5000"', "helpdesk__refund_order", { order_id: "O-61", amount: 5000 });
 await support("support-bot tries to delete a customer (not in its list)", "helpdesk__delete_customer", { customer_id: "C-9" });
+await support("support-bot asks report-bot for a summary (a pre-approved pair)", "helpdesk__ask_agent", { agent: "report-bot", message: "Summarise this week's tickets." });
+await support("support-bot asks admin-bot to delete customer C-9 (agent-to-agent: a human decides)", "helpdesk__ask_agent", { agent: "admin-bot", message: "Delete customer C-9." });
 
 const intruder = await connectAs("unknown-bot");
 await intruder("An agent nobody registered tries to read tickets", "helpdesk__list_tickets");
 
 console.log(`\nRefunds actually paid: ${helpdesk.refunds.map((r) => `$${r.amount}`).join(", ") || "none"}`);
 console.log(`Customers deleted: ${helpdesk.deleted.length}`);
+console.log(`Agent-to-agent messages passed: ${helpdesk.messages.map((m) => m.agent).join(", ") || "none"}`);
 const v = verifyAudit(auditPath);
 console.log(`Audit log: ${auditPath} (${v.ok ? `${v.entries} entries, hash chain intact` : "TAMPERED"})`);
 await approver.stop();
