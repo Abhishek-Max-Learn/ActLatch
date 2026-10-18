@@ -26,7 +26,7 @@ const config = parseConfig({
   policy: fromFile.policy,
   lookups: fromFile.lookups,
   toolInfo: fromFile.toolInfo,
-  approval: { host: "127.0.0.1", port: Number(process.env.ACTLATCH_PORT ?? 4848), timeoutSeconds: 120 },
+  approval: { host: "127.0.0.1", port: Number(process.env.ACTLATCH_PORT ?? 4848), timeoutSeconds: 120, openBrowser: !auto },
   audit: { path: auditPath },
 });
 
@@ -53,6 +53,12 @@ if (auto) {
   };
 }
 const audit = new AuditLog(auditPath);
+const waitMs = (config.approval.timeoutSeconds + 30) * 1000;
+if (!auto) {
+  console.log(`When a step needs a human, the approval page opens in your browser (or open the link printed below) and the request pops up there.`);
+  console.log(`Click Approve once or Deny within ${config.approval.timeoutSeconds} seconds. Keep the tab open: later requests pop up in it by themselves.`);
+  console.log("No answer in time counts as Deny. To skip clicking, run with -- --approve or -- --deny.\n");
+}
 
 console.log("=== The registry (what `npm run registry` prints) ===\n");
 const tools = (await hdClient.listTools()).tools.map((t) => t.name);
@@ -69,9 +75,14 @@ async function connectAs(agent: string) {
   console.log(`\n=== ${agent} connects. Tools it sees: ${(await client.listTools()).tools.map((t) => t.name).join(", ") || "(none)"}`);
   return async (label: string, name: string, args: Record<string, unknown> = {}) => {
     console.log(`\n> ${label}`);
-    const r = await client.callTool({ name, arguments: args });
-    const text = (r.content as { text: string }[]).map((c) => c.text).join(" ");
-    console.log(`  ${r.isError ? "BLOCKED" : "OK"}: ${text.replace(/\s+/g, " ").slice(0, 110)}`);
+    try {
+      // Wait a bit longer than the approval page does, so a slow human never crashes the demo.
+      const r = await client.callTool({ name, arguments: args }, undefined, { timeout: waitMs });
+      const text = (r.content as { text: string }[]).map((c) => c.text).join(" ");
+      console.log(`  ${r.isError ? "BLOCKED" : "OK"}: ${text.replace(/\s+/g, " ").slice(0, 110)}`);
+    } catch (err) {
+      console.log(`  BLOCKED: no answer (${err instanceof Error ? err.message : String(err)})`);
+    }
   };
 }
 

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
+import { factLines } from "../src/preview.js";
 import { WebApprover, type ApprovalOutcome, type ApprovalRequest, type Approver } from "../src/approval.js";
 import { AuditLog, verifyAudit } from "../src/audit.js";
 import { loadConfig, parseConfig } from "../src/config.js";
@@ -158,9 +159,11 @@ describe("web approver", () => {
 
     expect((await fetch(`${base.origin}/api/pending`)).status).toBe(403);
     expect((await fetch(`${base.origin}/api/pending?token=wrong`)).status).toBe(403);
+    expect(await (await fetch(`${base.origin}/`)).text()).toContain("missing its secret key"); // says what to do
 
     const page = await (await fetch(approver.url)).text();
-    expect(page).toContain("&lt;b&gt;x&lt;/b&gt;"); // previews are escaped
+    expect(page).not.toContain("<b>x</b>"); // agent text is drawn by the page with textContent, never as HTML
+    expect(page).not.toMatch(/innerHTML/);
 
     const [item] = (await (await fetch(`${base.origin}/api/pending?token=${approver.token}`)).json()) as { id: string }[];
     const res = await fetch(`${base.origin}/approve/${item!.id}?token=${approver.token}`, { method: "POST", redirect: "manual" });
@@ -182,6 +185,30 @@ describe("web approver", () => {
       delete process.env.CODESPACE_NAME;
       delete process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN;
     }
+  });
+
+  it("labels looked-up facts in plain words", () => {
+    expect(factLines({ order: { order_id: "O-1", price: 20, tags: ["a"] }, limit: 5 })).toEqual([
+      { label: "Order id", value: "O-1" },
+      { label: "Order price", value: "20" },
+      { label: "Order tags", value: "1 item: a" },
+      { label: "Limit", value: "5" },
+    ]);
+  });
+
+  it("opens the page in the browser only when it is not already open", async () => {
+    const opened: string[] = [];
+    const logs: string[] = [];
+    approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 10, openBrowser: true }, (m) => logs.push(m), (u) => (opened.push(u), true));
+    await approver.start();
+    const ask = (h: string) => approver!.request({ actionHash: h, reason: "r", preview: { tool: "t", summary: [], args: {}, headline: "bot wants to " + h } });
+    void ask("refund order");
+    expect(opened).toEqual([approver.browserUrl]);
+    await fetch(`${new URL(approver.url).origin}/api/pending?token=${approver.token}`); // the page checks in
+    expect(approver.list()[0]).toMatchObject({ secondsLeft: 10 });
+    void ask("delete customer");
+    expect(opened).toHaveLength(1);
+    expect(logs.at(-1)).toContain("bot wants to delete customer. It has popped up");
   });
 
   it("times out", async () => {
