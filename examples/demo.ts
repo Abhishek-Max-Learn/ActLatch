@@ -3,9 +3,9 @@
 // answer approvals automatically; otherwise open the printed URL and decide.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readAuditEntries, summarizeAudit } from "../src/activity.js";
 import { WebApprover } from "../src/approval.js";
 import { AuditLog, verifyAudit } from "../src/audit.js";
 import { parseConfig } from "../src/config.js";
@@ -13,7 +13,8 @@ import { Gateway, type ConnectedUpstream } from "../src/gateway.js";
 import { createMailServer } from "./mock-email-server.js";
 
 const auto = process.argv.includes("--approve") ? "approved" : process.argv.includes("--deny") ? "denied" : undefined;
-const auditPath = join(mkdtempSync(join(tmpdir(), "actlatch-")), "audit.jsonl");
+// The same log file the example configs use, so `npm run log` shows these calls too.
+const auditPath = join(dirname(fileURLToPath(import.meta.url)), "..", "actlatch-audit.jsonl");
 
 const config = parseConfig({
   upstreams: { mail: { command: "(in-process)", trust: "untrusted" } },
@@ -57,6 +58,7 @@ if (auto) {
   };
 }
 
+approver.activity = () => summarizeAudit(readAuditEntries(auditPath));
 const gateway = new Gateway(config, upstreams, approver, new AuditLog(auditPath));
 const [agentSide, gatewaySide] = InMemoryTransport.createLinkedPair();
 await gateway.createServer().connect(gatewaySide);

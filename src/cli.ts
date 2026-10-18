@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import Anthropic from "@anthropic-ai/sdk";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { parse, stringify } from "yaml";
+import { readAuditEntries, renderActivity, summarizeAudit } from "./activity.js";
 import { WebApprover } from "./approval.js";
 import { AuditLog, verifyAudit } from "./audit.js";
 import { loadConfig } from "./config.js";
@@ -25,6 +26,9 @@ const USAGE = `usage:
   actlatch setup --config servers.yaml [--out actlatch.yaml] [--no-ai]
                                             answer questions about your agents and tools; writes the registry
                                             (uses Claude to tailor questions when an Anthropic key is set)
+  actlatch log [--config actlatch.yaml] [--file actlatch-audit.jsonl]
+                                            every call agents made, in plain words: allowed, blocked, approved,
+                                            denied or timed out, and why; also checks nobody edited the log
   actlatch verify-audit <file.jsonl>        check the audit log's hash chain`;
 
 function flag(args: string[], name: string): string | undefined {
@@ -37,6 +41,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "start") {
     const config = loadConfig(flag(rest, "--config") ?? "actlatch.yaml");
     const approver = new WebApprover(config.approval);
+    approver.activity = () => summarizeAudit(readAuditEntries(config.audit.path));
     await approver.start();
     const identity = { agent: flag(rest, "--agent") ?? process.env.ACTLATCH_AGENT, key: process.env.ACTLATCH_AGENT_KEY };
     const gateway = new Gateway(config, await connectUpstreams(config), approver, new AuditLog(config.audit.path), identity);
@@ -92,6 +97,17 @@ async function main(argv: string[]): Promise<number> {
     } finally {
       rl.close();
     }
+  }
+  if (cmd === "log") {
+    const path = flag(rest, "--file") ?? loadConfig(flag(rest, "--config") ?? "actlatch.yaml").audit.path;
+    if (!existsSync(path)) {
+      console.log(`No audit log at ${path} yet. It is created on the first call.`);
+      return 0;
+    }
+    console.log(renderActivity(summarizeAudit(readAuditEntries(path))));
+    const v = verifyAudit(path);
+    console.log(v.ok ? `Log: ${path} (${v.entries} entries, nobody has edited it)` : `WARNING: the log was changed at line ${v.line}: ${v.problem}`);
+    return v.ok ? 0 : 1;
   }
   if (cmd === "verify-audit" && rest[0]) {
     const r = verifyAudit(rest[0]);

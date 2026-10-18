@@ -211,6 +211,21 @@ describe("web approver", () => {
     expect(logs.at(-1)).toContain("bot wants to delete customer. It has popped up");
   });
 
+  it("shows what happened, without the raw arguments, and notices a closed tab", async () => {
+    approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 10 }, () => {});
+    approver.activity = () => [{ time: "2026-10-18T08:00:00Z", agent: "a", tool: "x.refund", action: "refund (x)", result: "timed out", args: { card: "secret" } }];
+    await approver.start();
+    const origin = new URL(approver.url).origin;
+    const rows = await (await fetch(`${origin}/api/activity?token=${approver.token}`)).json();
+    expect(rows).toEqual([expect.objectContaining({ action: "refund (x)", resultText: "Blocked (no answer in time)" })]);
+    expect(JSON.stringify(rows)).not.toContain("secret");
+    expect((await fetch(`${origin}/api/activity`)).status).toBe(403);
+    await fetch(`${origin}/api/pending?token=${approver.token}`);
+    expect(approver.pageOpen).toBe(true);
+    await fetch(`${origin}/api/closed?token=${approver.token}`, { method: "POST" });
+    expect(approver.pageOpen).toBe(false);
+  });
+
   it("times out", async () => {
     approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 0.05 }, () => {});
     await approver.start();
