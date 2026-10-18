@@ -1,0 +1,13 @@
+# Starting point for `npm run setup`: just the servers your agents use.
+# Setup connects to them, finds their tools, asks you questions about each
+# agent, and saves the answers as examples/my-actlatch.yaml.
+
+upstreams:
+  helpdesk:
+    command: npx
+    args: [tsx, helpdesk-server.ts]
+    cwd: .
+    trust: untrusted
+
+audit:
+  path: ../actlatch-audit.jsonl

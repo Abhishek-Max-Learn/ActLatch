@@ -1,25 +1,89 @@
 #!/usr/bin/env node
+import Anthropic from "@anthropic-ai/sdk";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
+import { parse, stringify } from "yaml";
 import { WebApprover } from "./approval.js";
 import { AuditLog, verifyAudit } from "./audit.js";
 import { loadConfig } from "./config.js";
-import { Gateway, connectUpstreams } from "./gateway.js";
+import { Gateway, connectUpstreams, discoverToolDetails, discoverTools } from "./gateway.js";
+import { renderRegistry } from "./registry.js";
+import { pickDrafter, runSetup } from "./setup.js";
 
 const USAGE = `usage:
-  actlatch start [--config actlatch.yaml]   run the gateway as an MCP server on stdio
+  actlatch start [--config actlatch.yaml] [--agent <name>]
+                                            run the gateway as an MCP server on stdio for one agent
+                                            (the agent's key, if it has one, comes from ACTLATCH_AGENT_KEY)
+  actlatch registry [--config actlatch.yaml]
+                                            show every agent, the tools it can use and what each allows
+  actlatch setup --config servers.yaml [--out actlatch.yaml] [--no-ai]
+                                            answer questions about your agents and tools; writes the registry
+                                            (uses Claude to tailor questions when an Anthropic key is set)
   actlatch verify-audit <file.jsonl>        check the audit log's hash chain`;
+
+function flag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+}
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   if (cmd === "start") {
-    const i = rest.indexOf("--config");
-    const config = loadConfig(i >= 0 ? rest[i + 1]! : "actlatch.yaml");
+    const config = loadConfig(flag(rest, "--config") ?? "actlatch.yaml");
     const approver = new WebApprover(config.approval);
     await approver.start();
-    const gateway = new Gateway(config, await connectUpstreams(config), approver, new AuditLog(config.audit.path));
+    const identity = { agent: flag(rest, "--agent") ?? process.env.ACTLATCH_AGENT, key: process.env.ACTLATCH_AGENT_KEY };
+    const gateway = new Gateway(config, await connectUpstreams(config), approver, new AuditLog(config.audit.path), identity);
     await gateway.createServer().connect(new StdioServerTransport());
-    process.stderr.write(`[actlatch] gateway ready; audit log at ${config.audit.path}\n`);
+    if (gateway.identityError) process.stderr.write(`[actlatch] WARNING: ${gateway.identityError}; every call will be blocked\n`);
+    const who = gateway.agent && !gateway.identityError ? ` for agent "${gateway.agent}"` : "";
+    process.stderr.write(`[actlatch] gateway ready${who}; audit log at ${config.audit.path}\n`);
     return -1; // keep running
+  }
+  if (cmd === "registry") {
+    const config = loadConfig(flag(rest, "--config") ?? "actlatch.yaml");
+    console.log(renderRegistry(config, await discoverTools(config)));
+    return 0;
+  }
+  if (cmd === "setup") {
+    const path = flag(rest, "--config") ?? "actlatch.yaml";
+    // Paths inside the config are relative to its folder, so by default save next to it.
+    const out = flag(rest, "--out") ?? join(dirname(path), "actlatch.yaml");
+    const raw = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    const tools = await discoverToolDetails(loadConfig(path));
+    const rl = createInterface({ input: process.stdin });
+    // Queue lines so typed and piped answers both work.
+    const lines: string[] = [];
+    const waiting: ((l: string) => void)[] = [];
+    rl.on("line", (l) => (waiting.length ? waiting.shift()!(l) : lines.push(l)));
+    rl.on("close", () => waiting.splice(0).forEach((w) => w("")));
+    let closed = false;
+    rl.on("close", () => (closed = true));
+    const ask = (q: string) => {
+      process.stdout.write(q + " ");
+      if (lines.length) return Promise.resolve(lines.shift()!);
+      if (closed) throw new Error("input ended before setup finished");
+      return new Promise<string>((r) => waiting.push(r));
+    };
+    const env = rest.includes("--no-ai") ? { ...process.env, ACTLATCH_LLM: "off" } : process.env;
+    const { drafter: draft, label } = pickDrafter(env, () => new Anthropic(), (m) =>
+      console.log(`(AI help unavailable: ${m}. Using basic questions.)`),
+    );
+    console.log(`Questions: ${label}.`);
+    try {
+      const result = await runSetup({ raw, tools, ask: async (q) => ask(q), say: (l) => console.log(l), draft });
+      if (!result) {
+        console.log("Nothing saved.");
+        return 1;
+      }
+      writeFileSync(out, stringify(result));
+      console.log(`Saved to ${out}. See it any time with: actlatch registry --config ${out}`);
+      return 0;
+    } finally {
+      rl.close();
+    }
   }
   if (cmd === "verify-audit" && rest[0]) {
     const r = verifyAudit(rest[0]);

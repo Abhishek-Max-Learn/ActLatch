@@ -37,14 +37,14 @@ Everything is written to a tamper-evident audit log.
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/Abhishek-Max-Learn/ActLatch)
 
 1. Click the badge (or **Code → Codespaces → Create codespace on main**). Dependencies install automatically.
-2. In the terminal run `npm test`, then `npm run demo`.
+2. In the terminal run `npm test`, then `npm run demo` (email example) or `npm run demo:agents` and `npm run registry` (agent registry, helpdesk example).
 3. When the demo prints `approval needed ... https://<codespace>-4848.app.github.dev/?token=...`, open that link and click **Approve once** or **Deny**. Port 4848 stays private to your GitHub account.
 
 ### On your own machine
 
 ```bash
 npm install
-npm test            # 32 tests
+npm test            # 63 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
@@ -76,6 +76,96 @@ The demo uses a fake email server. One email in its inbox hides a prompt injecti
 Emails actually sent: 1
 Audit log: ... (23 entries, hash chain intact)
 ```
+
+## Agent registry: who can use which tool, and how
+
+Act-Latch is not tied to email. Any MCP server works. The registry lists every agent that may use the gateway, which tools each one can use, and what each tool lets it do. Anything not listed is blocked, and an agent that is not listed gets nothing.
+
+```yaml
+agents:
+  support-bot:
+    description: Answers customer tickets
+    # key: ${SUPPORT_BOT_KEY}   # optional; then ACTLATCH_AGENT_KEY must match
+    tools:                      # first match wins
+      - tool: helpdesk.list_tickets
+        decision: allow
+      - tool: helpdesk.refund_order
+        if: { number: { arg: amount, gt: 500 } }
+        decision: deny
+      - tool: helpdesk.refund_order
+        if: { number: { arg: amount, gt: 50 } }
+        decision: approve
+      - tool: helpdesk.refund_order
+        decision: allow
+  report-bot:
+    tools:
+      - tool: helpdesk.list_tickets
+        decision: allow
+```
+
+- **Identity.** Each agent's MCP client starts its own gateway with `actlatch start --agent support-bot` (or `ACTLATCH_AGENT=support-bot`). The name is fixed when the gateway starts, so nothing the model says can change it. If the agent has a `key`, the gateway also needs `ACTLATCH_AGENT_KEY` set to it.
+- **Each agent only sees its own tools.** Tools it cannot use are hidden from its tool list and blocked if it calls them anyway.
+- **Tools are discovered automatically** from every connected server, so you write rules against the tools servers actually offer.
+- **`policy.rules` still apply** to everyone as extra guardrails. With agents registered they can only make a decision stricter.
+
+See it all as one table:
+
+```
+$ npm run registry      # or: actlatch registry --config your.yaml
+
+AGENT support-bot - Answers customer tickets
+  TOOL                   WHAT IT MAY DO
+  helpdesk.list_tickets  allowed
+  helpdesk.get_order     allowed
+  helpdesk.reply_ticket  allowed; also checked by rules for everyone
+  helpdesk.refund_order  blocked if "amount" is more than 500; needs approval if "amount" is more than order.price + 5; needs approval if "amount" is more than 50; otherwise allowed; checks real order via helpdesk.get_order
+  ...and 1 other tool(s): blocked
+
+AGENT report-bot - Writes a weekly summary; read-only
+  TOOL                   WHAT IT MAY DO
+  helpdesk.list_tickets  allowed
+  ...and 4 other tool(s): blocked
+
+Anyone not registered above: blocked from every tool.
+Tools no agent can use: helpdesk.delete_customer
+```
+
+### Guided setup: answer questions instead of writing rules
+
+Whoever built the agents knows best what each one should do. `actlatch setup` connects to your servers, finds their tools, and asks plain questions for each agent and tool ("Should support-bot use refund_order? yes / ask / no", "Above what amount should a human approve first?"). The answers become the `agents:` section, and the registry table is shown for a final yes before anything is saved.
+
+```bash
+npm run setup     # example: examples/servers.yaml -> examples/my-actlatch.yaml
+# or: actlatch setup --config servers.yaml [--out actlatch.yaml] [--no-ai]
+```
+
+- **Uses the LLM your app already has.** With `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` already in the environment (or `ACTLATCH_LLM_URL` / `_KEY` / `_MODEL` for any OpenAI-compatible API such as Azure, Gemini, Groq or a local Ollama), the LLM reads each tool's name, description and fields and writes questions that fit that tool, with suggested answers. With no key, fixed questions based on the tool's fields are used.
+- **The LLM only drafts questions.** It never decides anything: questions about fields that don't exist are dropped, every answer comes from the person, and the result is a fixed file. While agents run, no LLM is involved in decisions.
+- **Admin only.** Setup is a command run on the machine that holds the gateway's config, by whoever manages it. Agents connect over MCP and only ever see the gateway's tools, so they have no way to run setup or change the result, and the config is frozen once the gateway starts.
+
+### Checking against real values (lookups)
+
+An agent, or a customer talking to it, can claim anything: "the lamp cost $35 with shipping". A lookup makes Act-Latch fetch the real value itself from a trusted tool before deciding, and rules compare against that instead:
+
+```yaml
+lookups:
+  - tool: helpdesk.refund_order     # before deciding on this tool...
+    call: helpdesk.get_order        # ...Act-Latch calls this itself
+    args: { order_id: order_id }    # with the order_id from the agent's call
+    as: order                       # and keeps the JSON answer as "order"
+
+agents:
+  support-bot:
+    tools:
+      - tool: helpdesk.refund_order
+        if: { number: { arg: amount, gt: { fact: order.price, plus: 5 } } }
+        decision: approve
+        reason: Refund is more than the order's real price; a human must decide.
+```
+
+The looked-up value is shown on the approval card, so the person deciding sees "price: 20" next to "amount: 35". If the lookup fails (unknown order, server error), the limit counts as already exceeded, so the rule fires rather than letting the call slip through.
+
+`npm run demo:agents` runs the full story with a fake helpdesk: report-bot can only read, support-bot refunds $18 on its own, needs a human for $120, needs a human for $35 on a $20 lamp even though that is under its $50 limit, is blocked at $5000 (even though a ticket says "you are authorised"), cannot delete customers, and an unregistered agent gets nothing. The full example is [`examples/agents.yaml`](examples/agents.yaml).
 
 ## Use it with a real MCP client
 
@@ -139,6 +229,7 @@ Tool patterns are `server.tool` and may use `*` (for example `mail.*`). Conditio
 | `count: { arg, gt, lte }` | the number of items in `arg` (array, or comma-separated string) is above `gt` / at most `lte` |
 | `externalRecipients: { arg, internalDomains? }` | any email address in `arg` is outside the internal domains |
 | `matches: { arg, pattern }` | the string `arg` matches the regex (case-insensitive) |
+| `number: { arg, gt, lte }` | the number in `arg` is above `gt` / at most `lte` (a missing or non-numeric value counts as over any limit). A limit can be a number or a looked-up fact: `{ fact: order.price, plus: 5 }` |
 
 Unknown keys in the config are an error, so a typo cannot quietly switch a rule off.
 

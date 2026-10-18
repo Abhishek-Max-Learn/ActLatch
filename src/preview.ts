@@ -29,6 +29,8 @@ export function buildPreview(tool: string, args: Args, internalDomains: readonly
     if (typeof v === "string") {
       const short = v.length > 120 ? v.slice(0, 117) + "..." : v;
       summary.push(`${k}: ${JSON.stringify(short)}`);
+    } else if (typeof v === "number" || typeof v === "boolean") {
+      summary.push(`${k}: ${v}`);
     } else if (Array.isArray(v)) {
       summary.push(`${k}: ${v.length} item(s)`);
     }

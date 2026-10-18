@@ -1,4 +1,4 @@
-import type { Condition, Decision, PolicyConfig, Rule } from "./config.js";
+import type { Condition, Decision, Limit, PolicyConfig, Rule } from "./config.js";
 
 export interface Verdict {
   decision: Decision;
@@ -7,6 +7,29 @@ export interface Verdict {
 }
 
 export type Args = Record<string, unknown>;
+/** Values the gateway looked up itself, by lookup name, e.g. { order: { price: 20 } }. */
+export type Facts = Record<string, unknown>;
+
+/** Read "order.price" out of the facts. Undefined when any step is missing. */
+export function factValue(facts: Facts, path: string): unknown {
+  let cur: unknown = facts;
+  for (const key of path.split(".")) {
+    if (!cur || typeof cur !== "object" || !Object.hasOwn(cur, key)) return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+function toNumber(v: unknown): number {
+  const n = typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : NaN;
+}
+
+/** A limit as a number; NaN when it names a fact that could not be found. */
+export function limitValue(limit: Limit, facts: Facts): number {
+  if (typeof limit === "number") return limit;
+  return toNumber(factValue(facts, limit.fact)) + (limit.plus ?? 0);
+}
 
 export function globMatch(pattern: string, name: string): boolean {
   const re = new RegExp("^" + pattern.split("*").map(escapeRe).join(".*") + "$");
@@ -38,7 +61,7 @@ export function externalAddresses(values: string[], internalDomains: readonly st
   });
 }
 
-function conditionHolds(cond: Condition, args: Args, policy: PolicyConfig): boolean {
+function conditionHolds(cond: Condition, args: Args, policy: PolicyConfig, facts: Facts): boolean {
   if (cond.count) {
     const n = listValues(args[cond.count.arg]).length;
     if (cond.count.gt !== undefined && !(n > cond.count.gt)) return false;
@@ -52,18 +75,32 @@ function conditionHolds(cond: Condition, args: Args, policy: PolicyConfig): bool
     const v = args[cond.matches.arg];
     if (typeof v !== "string" || !new RegExp(cond.matches.pattern, "i").test(v)) return false;
   }
+  if (cond.number) {
+    // Unknown values are treated as over every limit, and an unknown limit as already
+    // exceeded, so a missing value or a failed lookup can never slip under a limit.
+    const raw = toNumber(args[cond.number.arg]);
+    const n = Number.isNaN(raw) ? Infinity : raw;
+    if (cond.number.gt !== undefined) {
+      const gt = limitValue(cond.number.gt, facts);
+      if (!Number.isNaN(gt) && !(n > gt)) return false;
+    }
+    if (cond.number.lte !== undefined) {
+      const lte = limitValue(cond.number.lte, facts);
+      if (Number.isNaN(lte) || !(n <= lte)) return false;
+    }
+  }
   return true;
 }
 
-function ruleMatches(rule: Rule, tool: string, args: Args, policy: PolicyConfig): boolean {
-  return globMatch(rule.tool, tool) && (!rule.if || conditionHolds(rule.if, args, policy));
+function ruleMatches(rule: Rule, tool: string, args: Args, policy: PolicyConfig, facts: Facts): boolean {
+  return globMatch(rule.tool, tool) && (!rule.if || conditionHolds(rule.if, args, policy, facts));
 }
 
 /** First matching rule wins; otherwise the policy default (deny unless configured). */
-export function evaluate(policy: PolicyConfig, tool: string, args: Args): Verdict {
+export function evaluate(policy: PolicyConfig, tool: string, args: Args, facts: Facts = {}): Verdict {
   for (let i = 0; i < policy.rules.length; i++) {
     const rule = policy.rules[i]!;
-    if (ruleMatches(rule, tool, args, policy)) {
+    if (ruleMatches(rule, tool, args, policy, facts)) {
       return { decision: rule.decision, reason: rule.reason ?? `matched rule #${i + 1} (${rule.tool})`, rule: i };
     }
   }
