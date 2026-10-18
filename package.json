@@ -8,6 +8,7 @@
     "start": "tsx src/cli.ts start",
     "demo": "tsx examples/demo.ts",
     "demo:agents": "tsx examples/agents-demo.ts",
+    "log": "tsx src/cli.ts log --config examples/agents.yaml",
     "registry": "tsx src/cli.ts registry --config examples/agents.yaml",
     "setup": "tsx src/cli.ts setup --config examples/servers.yaml --out examples/my-actlatch.yaml",
     "test": "vitest run",

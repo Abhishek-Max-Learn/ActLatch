@@ -28,7 +28,7 @@ Everything is written to a tamper-evident audit log.
 - **Injected text cannot grant permissions.** The policy is loaded once and frozen; no tool exists that changes it. On top of that, once the agent has read output from an `untrusted` server (an inbox, a web page), the tools listed in `protectAfterUntrusted` always need a human, even if the policy would normally allow them. This check can only tighten a decision, never loosen it.
 - **Approval covers one exact action.** Each approval is for one call, recorded with a SHA-256 hash of the tool and its exact arguments. A different recipient list is a different action and needs its own approval.
 - **The agent cannot approve itself.** The approval page listens on localhost only, and every request needs a random token printed at startup.
-- **Audit log you can check.** Each line in the JSON Lines log includes the hash of the line before it. `actlatch verify-audit` finds any edited or deleted line.
+- **Audit log you can check.** Each line in the JSON Lines log includes the hash of the line before it. `actlatch verify-audit` finds any edited or deleted line. `npm run log` (or `actlatch log --config your.yaml`) lists every call in plain words: who asked, what for, and whether it was allowed, blocked, approved, denied or timed out, and why. The approval page shows the same list under "What happened".
 
 ## Quick start
 
@@ -37,7 +37,7 @@ Everything is written to a tamper-evident audit log.
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/Abhishek-Max-Learn/ActLatch)
 
 1. Click the badge (or **Code → Codespaces → Create codespace on main**). Dependencies install automatically.
-2. In the terminal run `npm test`, then `npm run demo` (email example) or `npm run demo:agents` and `npm run registry` (agent registry, helpdesk example).
+2. In the terminal run `npm test`, then `npm run demo` (email example) or `npm run demo:agents` and `npm run registry` (agent registry, helpdesk example). Then `npm run log` shows every call the demos made.
 3. When the demo prints `approval needed ... https://<codespace>-4848.app.github.dev/?token=...`, the approval page opens in your browser by itself (or open that link). The request pops up as a card in plain words: who wants to do what, why you are asked, the real values Act-Latch checked, and a countdown. Click **Approve once** or **Deny** within 2 minutes (no answer counts as Deny). Keep the tab open: later requests pop up in it, with a sound and, if you allow it, a desktop alert. Open the whole link, including the `?token=...` part: the page refuses links without it, and each run prints a new one. Port 4848 stays private to your GitHub account.
 
 ### On your own machine

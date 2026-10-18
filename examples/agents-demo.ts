@@ -3,10 +3,9 @@
 // automatically; otherwise open the printed URL and decide.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readAuditEntries, summarizeAudit } from "../src/activity.js";
 import { WebApprover } from "../src/approval.js";
 import { AuditLog, verifyAudit } from "../src/audit.js";
 import { loadConfig, parseConfig } from "../src/config.js";
@@ -16,10 +15,11 @@ import { renderReview, reviewRegistry } from "../src/review.js";
 import { createHelpdeskServer } from "./helpdesk-server.js";
 
 const auto = process.argv.includes("--approve") ? "approved" : process.argv.includes("--deny") ? "denied" : undefined;
-const auditPath = join(mkdtempSync(join(tmpdir(), "actlatch-")), "audit.jsonl");
 
 // Same registry as examples/agents.yaml, with the helpdesk run in-process.
 const fromFile = loadConfig(join(dirname(fileURLToPath(import.meta.url)), "agents.yaml"));
+// Same log file as agents.yaml, so `npm run log` shows these calls too.
+const auditPath = fromFile.audit.path;
 const config = parseConfig({
   upstreams: { helpdesk: { command: "(in-process)", trust: "untrusted" } },
   agents: fromFile.agents,
@@ -53,6 +53,7 @@ if (auto) {
   };
 }
 const audit = new AuditLog(auditPath);
+approver.activity = () => summarizeAudit(readAuditEntries(auditPath));
 const waitMs = (config.approval.timeoutSeconds + 30) * 1000;
 if (!auto) {
   console.log(`When a step needs a human, the approval page opens in your browser (or open the link printed below) and the request pops up there.`);
@@ -108,5 +109,6 @@ console.log(`Customers deleted: ${helpdesk.deleted.length}`);
 console.log(`Agent-to-agent messages passed: ${helpdesk.messages.map((m) => m.agent).join(", ") || "none"}`);
 const v = verifyAudit(auditPath);
 console.log(`Audit log: ${auditPath} (${v.ok ? `${v.entries} entries, hash chain intact` : "TAMPERED"})`);
+console.log("See every call in plain words with: npm run log");
 await approver.stop();
 process.exit(0);
