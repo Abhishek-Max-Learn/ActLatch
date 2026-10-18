@@ -8,3 +8,4 @@ export * from "./registry.js";
 export * from "./setup.js";
 export * from "./tools.js";
 export * from "./review.js";
+export * from "./activity.js";

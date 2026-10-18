@@ -204,20 +204,21 @@ The looked-up value is shown on the approval card, so the person deciding sees "
 ## Use it with a real MCP client
 
 1. Write a config (see [`examples/actlatch.yaml`](examples/actlatch.yaml)).
-2. Build: `npm run build`.
-3. Point your client at Act-Latch instead of the real server. For Claude Desktop (`claude_desktop_config.json`):
+2. Point your client at Act-Latch instead of the real server. For Claude Desktop (`claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "actlatch": {
-      "command": "node",
-      "args": ["/path/to/actlatch/dist/src/cli.js", "start", "--config", "/path/to/actlatch.yaml"],
+      "command": "npx",
+      "args": ["-y", "actlatch", "start", "--config", "/path/to/actlatch.yaml"],
       "env": { "MAIL_API_KEY": "the-real-key" }
     }
   }
 }
 ```
+
+Until the package is on npm, run it from a checkout instead: `npm run build`, then use `"command": "node"` with `"args": ["/path/to/actlatch/dist/cli.js", "start", "--config", "/path/to/actlatch.yaml"]`.
 
 Remove the real server from the client's config so the agent has no direct route to it. The agent will see tools named `mail__send_email` and so on. When a call needs approval, open the URL Act-Latch prints to stderr (it appears in the client's MCP logs).
 
@@ -291,7 +292,7 @@ src/preview.ts    plain-language preview for approvers
 src/approval.ts   local approval web page
 src/audit.ts      hash-chained JSONL log and verifier
 src/gateway.ts    the MCP proxy
-src/cli.ts        `actlatch start` / `actlatch verify-audit`
+src/cli.ts        the `actlatch` command (start, registry, review, setup, log, verify-audit)
 examples/         fake mail server, example config, scripted demo
 test/             vitest suites
 ```

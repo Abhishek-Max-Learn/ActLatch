@@ -2,9 +2,38 @@
   "name": "actlatch",
   "version": "0.1.0",
   "description": "Act-Latch: an MCP gateway that checks every AI agent tool call against a policy before it happens.",
-  "main": "dist/src/index.js",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "agent-security",
+    "guardrails",
+    "human-in-the-loop",
+    "approval",
+    "audit-log"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "actlatch": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "tsx src/cli.ts start",
     "demo": "tsx examples/demo.ts",
     "demo:agents": "tsx examples/agents-demo.ts",
@@ -12,7 +41,8 @@
     "registry": "tsx src/cli.ts registry --config examples/agents.yaml",
     "setup": "tsx src/cli.ts setup --config examples/servers.yaml --out examples/my-actlatch.yaml",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "repository": {
     "type": "git",
@@ -34,9 +64,5 @@
     "tsx": "^4.23.15",
     "typescript": "5.9",
     "vitest": "^5.0.5"
-  },
-  "type": "module",
-  "bin": {
-    "actlatch": "dist/src/cli.js"
   }
 }
