@@ -158,6 +158,7 @@ describe("web approver", () => {
 
     expect((await fetch(`${base.origin}/api/pending`)).status).toBe(403);
     expect((await fetch(`${base.origin}/api/pending?token=wrong`)).status).toBe(403);
+    expect(await (await fetch(`${base.origin}/`)).text()).toContain("missing its secret key"); // says what to do
 
     const page = await (await fetch(approver.url)).text();
     expect(page).toContain("&lt;b&gt;x&lt;/b&gt;"); // previews are escaped

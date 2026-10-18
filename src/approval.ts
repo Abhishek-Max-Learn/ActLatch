@@ -109,7 +109,9 @@ export class WebApprover implements Approver {
   private handle(req: IncomingMessage, res: ServerResponse): void {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (!this.authorised(url)) {
-      res.writeHead(403, { "content-type": "text/plain" }).end("forbidden");
+      // Usually a link opened without its ?token=... part (for example from the Codespaces
+      // "Open in Browser" pop-up), or a tab left open from an earlier run.
+      res.writeHead(403, { "content-type": "text/html; charset=utf-8" }).end(LOCKED_PAGE);
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/pending") {
@@ -145,6 +147,13 @@ button{font-size:15px;padding:8px 16px;border-radius:6px;border:1px solid #999;m
 </style></head><body><h1>Act-Latch approvals</h1>${cards}</body></html>`;
   }
 }
+
+const LOCKED_PAGE = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Act-Latch approvals</title></head><body style="font:15px system-ui,sans-serif;max-width:640px;margin:24px auto;padding:0 16px">
+<h1>This link is missing its secret key</h1>
+<p>For safety, the approval page only opens with the full link Act-Latch printed in the terminal, the one that ends in <code>?token=...</code>.</p>
+<p>Copy that whole line from the terminal and open it. If you restarted Act-Latch, use the newest link: each run makes a new one.</p>
+</body></html>`;
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);

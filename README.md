@@ -38,7 +38,7 @@ Everything is written to a tamper-evident audit log.
 
 1. Click the badge (or **Code → Codespaces → Create codespace on main**). Dependencies install automatically.
 2. In the terminal run `npm test`, then `npm run demo` (email example) or `npm run demo:agents` and `npm run registry` (agent registry, helpdesk example).
-3. When the demo prints `approval needed ... https://<codespace>-4848.app.github.dev/?token=...`, open that link and click **Approve once** or **Deny**. Port 4848 stays private to your GitHub account.
+3. When the demo prints `approval needed ... https://<codespace>-4848.app.github.dev/?token=...`, open that link and click **Approve once** or **Deny** within 2 minutes (no answer counts as Deny). Open the whole link, including the `?token=...` part: the page refuses links without it, and each run prints a new one. Port 4848 stays private to your GitHub account.
 
 ### On your own machine
 
