@@ -5,7 +5,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readAuditEntries, summarizeAudit } from "../src/activity.js";
 import { WebApprover } from "../src/approval.js";
 import { AuditLog, verifyAudit } from "../src/audit.js";
 import { parseConfig } from "../src/config.js";
@@ -58,7 +57,6 @@ if (auto) {
   };
 }
 
-approver.activity = () => summarizeAudit(readAuditEntries(auditPath));
 const gateway = new Gateway(config, upstreams, approver, new AuditLog(auditPath));
 const [agentSide, gatewaySide] = InMemoryTransport.createLinkedPair();
 await gateway.createServer().connect(gatewaySide);
