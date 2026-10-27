@@ -60,7 +60,7 @@ export class AuditLog {
   write(ev: AuditEvent): AuditEntry {
     const body = { ...ev, seq: this.seq + 1, ts: this.now().toISOString(), prevHash: this.prevHash };
     const entry: AuditEntry = { ...body, hash: sha256(canonicalJson(body)) };
-    appendFileSync(this.path, JSON.stringify(entry) + "\n");
+    appendFileSync(this.path, JSON.stringify(entry) + "\n", { mode: 0o600 }); // only its owner can read it: it holds what agents sent
     this.seq = entry.seq;
     this.prevHash = entry.hash;
     return entry;
