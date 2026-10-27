@@ -1,0 +1,34 @@
+# Publishes to npm only when someone creates a GitHub Release (e.g. tag v0.1.0).
+# The package is signed with npm provenance: npm shows it was built from this
+# repo at that exact commit, by GitHub, not on someone's laptop.
+name: publish
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  id-token: write # lets npm verify this run (provenance / trusted publishing)
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm install -g npm@11 # trusted publishing needs npm 11.5+
+      - name: Release tag must match package.json version
+        run: |
+          want="v$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "Release tag is $GITHUB_REF_NAME but package.json says $want. Fix one so they match."
+            exit 1
+          fi
+      - run: npm ci
+      # prepublishOnly runs typecheck, tests and build before anything is uploaded.
+      - run: npm publish --provenance --access public
+        env:
+          # Only needed until trusted publishing is turned on for the package on npmjs.com.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

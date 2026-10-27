@@ -14,6 +14,10 @@ import { applyTaint, globMatch, type Args, type Facts } from "./policy.js";
 import { buildPreview, factLines, humanize } from "./preview.js";
 import { toolProfile, type ToolProfile } from "./tools.js";
 import { canSee, decide, identityProblem, type Discovered, type Identity } from "./registry.js";
+import { createRequire } from "node:module";
+
+// One version number for everything: the one in package.json (works from src/ and dist/).
+const { version: VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export interface ConnectedUpstream {
   name: string;
@@ -158,7 +162,7 @@ export class Gateway {
 
   /** An MCP server that the agent connects to instead of the real servers. */
   createServer(): Server {
-    const server = new Server({ name: "actlatch", version: "0.1.0" }, { capabilities: { tools: {} } });
+    const server = new Server({ name: "actlatch", version: VERSION }, { capabilities: { tools: {} } });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await this.listTools() }));
     server.setRequestHandler(CallToolRequestSchema, async (req) =>
       this.callTool(req.params.name, (req.params.arguments ?? {}) as Args),
@@ -176,7 +180,7 @@ export async function connectUpstream(name: string, up: Upstream): Promise<Conne
     cwd: up.cwd,
     stderr: "inherit",
   });
-  const client = new Client({ name: "actlatch", version: "0.1.0" });
+  const client = new Client({ name: "actlatch", version: VERSION });
   await client.connect(transport);
   return { name, trust: up.trust, client };
 }
