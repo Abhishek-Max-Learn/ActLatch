@@ -1,5 +1,6 @@
 // The "brain" behind each playground agent: a real LLM over any OpenAI-style API,
 // or, with no key, a pretend AI that follows a script (and falls for the trick email).
+import Anthropic from "@anthropic-ai/sdk";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export interface ToolCall {
@@ -135,6 +136,66 @@ export function llmBrain(p: Provider, fetchFn: typeof fetch = fetch): Brain {
       return { answer: msg?.content?.trim() || "(no answer)" };
     },
   };
+}
+
+// ---- Claude, through the Anthropic SDK ----
+
+/**
+ * Claude keeps its own record of each agent's turn: thinking blocks must go back
+ * exactly as they came, so the conversation is only ever appended to.
+ */
+export function claudeBrain(client: Anthropic = new Anthropic(), model = process.env.ACTLATCH_LLM_MODEL ?? "claude-opus-5-5"): Brain {
+  const convos = new WeakMap<Turn, { messages: Anthropic.Beta.BetaMessageParam[]; pending: string[] }>();
+  return {
+    label: `real AI: Claude (${model})`,
+    async next(turn) {
+      let convo = convos.get(turn);
+      if (!convo) {
+        convo = { messages: [{ role: "user", content: turn.task }], pending: [] };
+        convos.set(turn, convo);
+      } else if (convo.pending.length) {
+        // Answer every tool call from the last step in one message.
+        const results = turn.history.slice(-convo.pending.length);
+        convo.messages.push({
+          role: "user",
+          content: convo.pending.map((id, i) => ({ type: "tool_result" as const, tool_use_id: id, content: results[i]?.result ?? "", is_error: results[i]?.blocked ?? false })),
+        });
+        convo.pending = [];
+      }
+      const response = await client.beta.messages.create({
+        model,
+        max_tokens: 16000,
+        system: turn.system,
+        // These agents do small, simple jobs, so they think briefly.
+        output_config: { effort: "low" },
+        // If Claude declines for safety reasons, the API retries on its default fallback model.
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        tools: turn.tools.map((t) => ({
+          name: t.name,
+          description: t.description ?? "",
+          input_schema: cleanSchema(t.inputSchema ?? { type: "object", properties: {} }) as Anthropic.Beta.BetaTool.InputSchema,
+        })),
+        messages: convo.messages,
+      });
+      convo.messages.push({ role: "assistant", content: response.content });
+      if (response.stop_reason === "refusal") return { answer: "Claude declined this task." };
+      const uses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
+      if (uses.length) {
+        convo.pending = uses.map((u) => u.id);
+        return { calls: uses.map((u) => ({ name: u.name, args: (u.input ?? {}) as Record<string, unknown> })) };
+      }
+      const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
+      return { answer: text || "(no answer)" };
+    },
+  };
+}
+
+/** The brain to use: any OpenAI-style URL first, then a Claude key, then the other known keys, else pretend. */
+export function pickBrain(env: NodeJS.ProcessEnv = process.env): Brain {
+  if (!env.ACTLATCH_LLM_URL && (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN)) return claudeBrain();
+  const provider = pickProvider(env);
+  return provider ? llmBrain(provider) : pretendBrain();
 }
 
 // ---- Pretend AI: no key needed. It plays the team, and falls for the trick email on purpose. ----

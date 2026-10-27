@@ -46,7 +46,7 @@ Everything is written to a tamper-evident audit log.
 
 ```bash
 npm install
-npm test            # 93 tests
+npm test            # 96 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
@@ -59,6 +59,7 @@ The agents use a real AI when a key is set, and a pretend AI that follows a scri
 
 | AI | Set before `npm run playground` |
 |---|---|
+| Claude (key from console.anthropic.com) | `export ANTHROPIC_API_KEY=...` |
 | Groq (free key at console.groq.com) | `export GROQ_API_KEY=...` |
 | Google Gemini (free key at aistudio.google.com) | `export GEMINI_API_KEY=...` |
 | xAI Grok | `export XAI_API_KEY=...` |
