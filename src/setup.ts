@@ -326,7 +326,7 @@ export async function runSetup(opts: SetupOptions): Promise<Record<string, unkno
   say(`Found ${tools.length} tool(s): ${tools.map((t) => t.id).join(", ")}`);
   say("Press Enter to accept the suggestion in [brackets].");
 
-  const agents: Record<string, { description?: string; tools: Rule[]; talksTo?: string[] }> = {};
+  const agents: Record<string, { description?: string; orchestrator?: boolean; tools: Rule[]; talksTo?: string[] }> = {};
   const list = tools.map((t, i) => `  ${i + 1}. ${t.id} (${t.access})${t.description ? ` - ${t.description.replace(/\.$/, "")}` : ""}`).join("\n");
   for (;;) {
     const typed = (await ask("\nAgent name (Enter when you have added all agents):")).trim();
@@ -370,14 +370,29 @@ export async function runSetup(opts: SetupOptions): Promise<Record<string, unkno
       rules.push(...answersToRules(tool.id, answers));
     }
     let talksTo: string[] = [];
-    if (picked.some((i) => isAgentTool(ConfigSchema.parse({ upstreams: {} }), tools[i]!.id))) {
-      const others = (await ask(`\nWhich agents may ${name} pass work to without a human approving each time? Names, comma-separated (Enter: always ask):`))
-        .split(",")
-        .map(toAgentName)
-        .filter(Boolean);
-      talksTo = [...new Set(others)];
+    let orchestrator = false;
+    const handoff = picked.filter((i) => isAgentTool(ConfigSchema.parse({ upstreams: {} }), tools[i]!.id)).map((i) => tools[i]!.id);
+    if (handoff.length) {
+      say(`\n${handoff.join(", ")} passes work to other agents. Only the orchestrator (the boss agent that hands out work) may do that.`);
+      let answer = (await ask(`Is ${name} the orchestrator? (yes / no) [no]`)).trim().toLowerCase() || "no";
+      while (!["yes", "y", "no", "n"].includes(answer)) answer = (await ask("Please answer yes or no:")).trim().toLowerCase() || "no";
+      orchestrator = answer.startsWith("y");
+      if (orchestrator) {
+        const others = (await ask(`Which agents may ${name} pass work to without a human approving each time? Names, comma-separated (Enter: always ask):`))
+          .split(",")
+          .map(toAgentName)
+          .filter(Boolean);
+        talksTo = [...new Set(others)];
+      } else {
+        say(`Then ${name} cannot pass work to other agents; Act-Latch will block it.`);
+      }
     }
-    agents[name] = { ...(description ? { description } : {}), tools: rules, ...(talksTo.length ? { talksTo } : {}) };
+    agents[name] = {
+      ...(description ? { description } : {}),
+      ...(orchestrator ? { orchestrator } : {}),
+      tools: rules,
+      ...(talksTo.length ? { talksTo } : {}),
+    };
     say(`${name}: ${picked.length} tool(s) set up; every other tool is blocked for it.`);
   }
 

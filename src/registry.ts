@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import type { Condition, Config, Decision, Limit, Rule } from "./config.js";
+import type { Agent, Condition, Config, Decision, Limit, Rule } from "./config.js";
 import { evaluate, globMatch, stricter, type Args, type Facts, type Verdict } from "./policy.js";
 import { isAgentTool, toolProfile } from "./tools.js";
 
@@ -36,33 +36,39 @@ export function decide(config: Config, agent: string | undefined, tool: string, 
   const entry = agent && Object.hasOwn(config.agents, agent) ? config.agents[agent] : undefined;
   if (!entry) return { decision: "deny", reason: agent ? `agent "${agent}" is not registered` : "unknown agent" };
 
+  // A blocked agent-to-agent message gives its own reason, even for a tool the agent was never given.
+  const talk = agentTalk(config, agent!, entry, tool, args);
+  if (talk.decision === "deny") return talk;
   const own = evaluate({ ...config.policy, default: "deny", rules: entry.tools }, tool, args, facts);
   const verdict = own.rule === undefined ? { decision: "deny" as const, reason: `${tool} is not in ${agent}'s tool list` } : own;
   const guard = evaluate({ ...config.policy, default: "allow" }, tool, args, facts);
   const guarded = guard.rule === undefined ? verdict : stricter(verdict, guard);
-  return stricter(guarded, agentTalk(config, agent!, entry.talksTo, tool, args));
+  return stricter(guarded, talk);
 }
 
 /**
- * Agent-to-agent messages: by default a human approves each one, so one agent
- * cannot quietly get another to use tools it was not given. Pairs listed in
- * `talksTo` go through without asking, so normal app flows keep working.
- * This can only tighten a decision.
+ * Agent-to-agent messages. Only an orchestrator may pass work to another agent:
+ * a helper that tries is blocked outright, so helpers cannot recruit each other
+ * (or the orchestrator) to use tools they were not given. An orchestrator's
+ * messages need a human's approval, except to agents listed in its `talksTo`,
+ * so normal app flows keep working. This can only tighten a decision.
  */
-function agentTalk(config: Config, agent: string, talksTo: readonly string[], tool: string, args: Args): Verdict {
+function agentTalk(config: Config, agent: string, entry: Agent, tool: string, args: Args): Verdict {
   const ok: Verdict = { decision: "allow", reason: "not an agent-to-agent message" };
   const { agentArg } = toolProfile(config, tool, undefined, args);
+  if (!agentArg && !isAgentTool(config, tool)) return ok;
+  if (!entry.orchestrator) {
+    return { decision: "deny", reason: `${agent} is a helper agent; only an orchestrator may pass work to other agents` };
+  }
   if (!agentArg) {
     // Looks like an agent-to-agent tool but no target can be found: a human decides.
-    return isAgentTool(config, tool)
-      ? { decision: "approve", reason: `${agent} wants to pass work to another agent via ${tool}; a human approves agent-to-agent messages` }
-      : ok;
+    return { decision: "approve", reason: `${agent} wants to pass work to another agent via ${tool}; a human approves agent-to-agent messages` };
   }
   const target = String(args[agentArg] ?? "");
   if (!target || !Object.hasOwn(config.agents ?? {}, target)) {
     return { decision: "deny", reason: `${agent} tried to message "${target || "(no agent named)"}", which is not a registered agent` };
   }
-  if (target === agent || talksTo.includes(target)) return ok;
+  if (target === agent || entry.talksTo.includes(target)) return ok;
   return { decision: "approve", reason: `${agent} wants to pass work to ${target}; a human approves agent-to-agent messages` };
 }
 
@@ -70,7 +76,8 @@ function agentTalk(config: Config, agent: string, talksTo: readonly string[], to
 export function canSee(config: Config, agent: string | undefined, tool: string): boolean {
   if (!config.agents) return true;
   const entry = agent && Object.hasOwn(config.agents, agent) ? config.agents[agent] : undefined;
-  return !!entry && entry.tools.some((r) => r.decision !== "deny" && globMatch(r.tool, tool));
+  if (!entry || (!entry.orchestrator && isAgentTool(config, tool))) return false;
+  return entry.tools.some((r) => r.decision !== "deny" && globMatch(r.tool, tool));
 }
 
 // ---- Plain-language view of the registry ----
@@ -144,18 +151,19 @@ export function renderRegistry(config: Config, discovered: Discovered): string {
 
   const usable = new Set<string>();
   for (const [name, agent] of Object.entries(config.agents)) {
-    out.push("", `AGENT ${name}${agent.description ? ` - ${agent.description}` : ""}${agent.key !== undefined ? " [key required]" : ""}`);
+    out.push("", `AGENT ${name}${agent.orchestrator ? " (orchestrator)" : ""}${agent.description ? ` - ${agent.description}` : ""}${agent.key !== undefined ? " [key required]" : ""}`);
     const visible = allTools.filter((t) => canSee(config, name, t));
     visible.forEach((t) => usable.add(t));
     if (visible.length === 0) out.push("  (no tools)");
     else out.push(...table(config, visible.map((t) => [t, describeAccess(agent.tools, t) + lookupNote(t) + taintNote(t) + guardNote(t)])));
     const hidden = allTools.length - visible.length;
     if (hidden > 0) out.push(`  ...and ${hidden} other tool(s): blocked`);
-    if (agent.talksTo.length || visible.some((t) => isAgentTool(config, t))) {
+    if (!agent.orchestrator) out.push("  Passing work to other agents: blocked (only an orchestrator may).");
+    else {
       out.push(
         agent.talksTo.length
-          ? `  Messages to ${agent.talksTo.join(", ")}: allowed. Messages to other agents: need approval.`
-          : "  Messages to other agents: need approval.",
+          ? `  Passing work to ${agent.talksTo.join(", ")}: allowed. To other agents: needs approval.`
+          : "  Passing work to other agents: needs approval.",
       );
     }
   }

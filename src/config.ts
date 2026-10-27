@@ -69,10 +69,17 @@ const Agent = z
     key: z.string().optional(),
     // Same shape as policy rules; first match wins; anything not listed is denied.
     tools: z.array(Rule).default([]),
-    // Other agents this agent may message without a human approving each time.
+    // The boss agent that hands work to the others. Only an orchestrator may pass work to
+    // another agent; a helper that tries is blocked, and never even sees the hand-off tool.
+    orchestrator: z.boolean().default(false),
+    // Agents this orchestrator may hand work to without a human approving each time.
     talksTo: z.array(z.string()).default([]),
   })
-  .strict();
+  .strict()
+  .refine((a) => a.orchestrator || a.talksTo.length === 0, {
+    message: "talksTo is only for an orchestrator (add orchestrator: true); helper agents may not pass work to other agents",
+    path: ["talksTo"],
+  });
 export type Agent = z.infer<typeof Agent>;
 
 export const AccessType = z.enum(["read", "write", "update", "delete"]);

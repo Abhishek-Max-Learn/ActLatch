@@ -162,7 +162,7 @@ describe("registry view", () => {
 
   it("loads the example registry", () => {
     const cfg = loadConfig("examples/agents.yaml");
-    expect(Object.keys(cfg.agents!)).toEqual(["support-bot", "report-bot", "admin-bot"]);
+    expect(Object.keys(cfg.agents!)).toEqual(["triage-bot", "support-bot", "report-bot", "admin-bot"]);
   });
 });
 
