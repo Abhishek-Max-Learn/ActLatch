@@ -40,7 +40,7 @@ export function pickProvider(env: NodeJS.ProcessEnv = process.env): Provider | u
     return { baseUrl: env.ACTLATCH_LLM_URL, key: env.ACTLATCH_LLM_KEY, model: env.ACTLATCH_LLM_MODEL ?? "default", name: new URL(env.ACTLATCH_LLM_URL).host };
   }
   const known: [string, string, string, string][] = [
-    ["GROQ_API_KEY", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", "Groq"],
+    ["GROQ_API_KEY", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "Groq"],
     ["GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", "Google Gemini"],
     ["XAI_API_KEY", "https://api.x.ai/v1", "grok-3-mini", "xAI Grok"],
     ["OPENAI_API_KEY", "https://api.openai.com/v1", "gpt-4o-mini", "OpenAI"],
@@ -63,9 +63,28 @@ function cleanSchema(schema: unknown): unknown {
   return out;
 }
 
+// Models that handle tool calls well, best first. Used when the chosen model is not available.
+const FALLBACK_MODELS = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "gpt-4o-mini", "gemini-2.5-flash", "grok-3-mini", "openai/gpt-oss-20b"];
+
+/** Ask the provider which models this key can use, and pick one that handles tools. */
+async function availableModel(p: Provider, fetchFn: typeof fetch): Promise<string | undefined> {
+  try {
+    const res = await fetchFn(`${p.baseUrl.replace(/\/$/, "")}/models`, { headers: p.key ? { authorization: `Bearer ${p.key}` } : {} });
+    if (!res.ok) return undefined;
+    const ids = (((await res.json()) as { data?: { id: string }[] }).data ?? []).map((m) => m.id.replace(/^models\//, ""));
+    return FALLBACK_MODELS.find((m) => ids.includes(m)) ?? ids.find((id) => !/whisper|tts|embed|guard|image|audio/i.test(id));
+  } catch {
+    return undefined;
+  }
+}
+
 export function llmBrain(p: Provider, fetchFn: typeof fetch = fetch): Brain {
+  let model = p.model;
+  let switched = false;
   return {
-    label: `real AI: ${p.name} (${p.model})`,
+    get label() {
+      return `real AI: ${p.name} (${model})`;
+    },
     async next(turn) {
       const messages: unknown[] = [
         { role: "system", content: turn.system },
@@ -80,12 +99,26 @@ export function llmBrain(p: Provider, fetchFn: typeof fetch = fetch): Brain {
         type: "function",
         function: { name: t.name, description: t.description ?? "", parameters: cleanSchema(t.inputSchema ?? { type: "object", properties: {} }) },
       }));
-      const res = await fetchFn(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(p.key ? { authorization: `Bearer ${p.key}` } : {}) },
-        body: JSON.stringify({ model: p.model, messages, ...(tools.length ? { tools, tool_choice: "auto" } : {}), temperature: 0.2 }),
-      });
-      if (!res.ok) throw new Error(`${p.name} answered ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const ask = () =>
+        fetchFn(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...(p.key ? { authorization: `Bearer ${p.key}` } : {}) },
+          body: JSON.stringify({ model, messages, ...(tools.length ? { tools, tool_choice: "auto" } : {}), temperature: 0.2 }),
+        });
+      let res = await ask();
+      if (res.status === 404 && !switched) {
+        // Providers retire models often. Switch once to one this key can use.
+        switched = true;
+        const other = await availableModel(p, fetchFn);
+        if (other && other !== model) {
+          model = other;
+          res = await ask();
+        }
+      }
+      if (!res.ok) {
+        const hint = res.status === 404 ? ` Pick a model your key can use with: export ACTLATCH_LLM_MODEL=<model name>` : "";
+        throw new Error(`${p.name} answered ${res.status}: ${(await res.text()).slice(0, 300)}${hint}`);
+      }
       const data = (await res.json()) as { choices?: { message?: { content?: string | null; tool_calls?: { function: { name: string; arguments: string } }[] } }[] };
       const msg = data.choices?.[0]?.message;
       // Calls are made one at a time, so each result is seen before the next decision.

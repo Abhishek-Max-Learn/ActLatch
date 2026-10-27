@@ -75,6 +75,22 @@ describe("playground", () => {
     expect(bodies[2].body.messages.at(-1)).toMatchObject({ role: "tool", content: expect.stringContaining("Act-Latch blocked") });
   });
 
+  it("switches to an available model when the provider has retired the chosen one", async () => {
+    const asked: string[] = [];
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: "whisper-large-v3" }, { id: "openai/gpt-oss-120b" }] }));
+      const model = JSON.parse(String(init!.body)).model;
+      asked.push(model);
+      if (model === "old-model") return new Response('{"error":{"code":"model_not_found"}}', { status: 404 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "hello" } }] }));
+    }) as unknown as typeof fetch;
+    const brain = llmBrain({ baseUrl: "https://llm.test/v1", key: "k", model: "old-model", name: "Groq" }, fakeFetch);
+    const step = await brain.next({ agent: "summarizer", system: "s", task: "t", tools: [], history: [] });
+    expect(step).toEqual({ answer: "hello" });
+    expect(asked).toEqual(["old-model", "openai/gpt-oss-120b"]);
+    expect(brain.label).toBe("real AI: Groq (openai/gpt-oss-120b)");
+  });
+
   it("picks an AI provider from the environment", () => {
     expect(pickProvider({})).toBeUndefined();
     expect(pickProvider({ GROQ_API_KEY: "g" })).toMatchObject({ name: "Groq", key: "g" });
