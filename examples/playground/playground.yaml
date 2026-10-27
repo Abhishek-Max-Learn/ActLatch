@@ -1,0 +1,65 @@
+# Act-Latch playground: an email team run by a real AI, every agent behind Act-Latch.
+# Run with `npm run playground`. The tool servers run inside the playground, so the
+# commands below are placeholders.
+
+upstreams:
+  mail:
+    command: (in-process)
+    # Emails are written by strangers, so treat what the inbox returns as untrusted.
+    trust: untrusted
+  team:
+    command: (in-process)
+    trust: trusted
+
+agents:
+  # The boss: decides who does what. The only agent that may hand out work.
+  boss:
+    description: Orchestrator; splits the job between the helpers
+    orchestrator: true
+    talksTo: [email-reader, summarizer, reply-writer]
+    tools:
+      - tool: team.ask_agent
+        decision: allow
+
+  email-reader:
+    description: Reads the inbox; may not send anything
+    tools:
+      - tool: mail.read_inbox
+        decision: allow
+
+  summarizer:
+    description: Writes short summaries; needs no tools at all
+    tools: []
+
+  reply-writer:
+    description: Drafts and sends replies
+    tools:
+      - tool: mail.draft_email
+        decision: allow
+      - tool: mail.send_email
+        if: { count: { arg: to, gt: 50 } }
+        decision: deny
+        reason: Sending to more than 50 people is never done by an agent.
+      - tool: mail.send_email
+        if: { count: { arg: to, gt: 5 } }
+        decision: approve
+        reason: Sending to more than 5 people needs a human.
+      - tool: mail.send_email
+        if: { externalRecipients: { arg: to } }
+        decision: approve
+        reason: Email to someone outside acme.com needs a human.
+      - tool: mail.send_email
+        decision: allow
+
+toolInfo:
+  team.ask_agent: { agentCall: { arg: agent } }
+
+policy:
+  internalDomains: [acme.com]
+
+approval:
+  port: 4848
+  timeoutSeconds: 120
+
+audit:
+  path: ../../actlatch-audit.jsonl

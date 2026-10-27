@@ -2,11 +2,15 @@
   "name": "Act-Latch",
   "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
   "postCreateCommand": "npm ci",
-  "forwardPorts": [4848],
+  "forwardPorts": [4848, 4850],
   "portsAttributes": {
     "4848": {
       "label": "Act-Latch approvals",
       "onAutoForward": "silent"
+    },
+    "4850": {
+      "label": "Act-Latch playground",
+      "onAutoForward": "openBrowser"
     }
   },
   "customizations": {

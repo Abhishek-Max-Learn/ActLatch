@@ -46,10 +46,26 @@ Everything is written to a tamper-evident audit log.
 
 ```bash
 npm install
-npm test            # 86 tests
+npm test            # 93 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
+
+### Playground: a real AI email team behind Act-Latch
+
+`npm run playground` starts a small email team (a boss agent, an email reader, a summarizer and a reply writer) and a web page at port 4850. Give the boss a job, or press one of the attack buttons, and watch every request the agents make get allowed, blocked or sent to you for approval. Hand-offs between agents go through Act-Latch too, so a helper asking another agent for help is blocked.
+
+The agents use a real AI when a key is set, and a pretend AI that follows a script (and falls for the trick email on purpose) when none is:
+
+| AI | Set before `npm run playground` |
+|---|---|
+| Groq (free key at console.groq.com) | `export GROQ_API_KEY=...` |
+| Google Gemini (free key at aistudio.google.com) | `export GEMINI_API_KEY=...` |
+| xAI Grok | `export XAI_API_KEY=...` |
+| OpenAI | `export OPENAI_API_KEY=...` |
+| Ollama or any OpenAI-style API | `export ACTLATCH_LLM_URL=http://localhost:11434/v1 ACTLATCH_LLM_MODEL=llama3.2` |
+
+`ACTLATCH_LLM_MODEL` picks another model. In Codespaces, add the key under **Settings → Codespaces → Secrets** (or `export` it in the terminal) and open the forwarded port 4850. `npm run playground -- --once "your job" --deny` runs one job in the terminal.
 
 ### Demo: the poisoned inbox
 
