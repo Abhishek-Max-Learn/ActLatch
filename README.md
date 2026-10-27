@@ -44,7 +44,7 @@ Everything is written to a tamper-evident audit log.
 
 ```bash
 npm install
-npm test            # 77 tests
+npm test            # 86 tests
 npm run demo        # scripted demo; open the printed URL to approve or deny
 npm run demo -- --deny   # same demo, answers approvals automatically
 ```
@@ -154,13 +154,19 @@ toolInfo:
   crew.handover:    { agentCall: { arg: to } }          # passes work to the agent named in "to"
 ```
 
-**Agent-to-agent messages.** A tool that passes work to another agent (guessed from names like `ask_agent` or `delegate`, or set with `agentCall`) needs a human's approval for each message by default, so one agent cannot quietly get another to use tools it was not given. A message to an unregistered agent is blocked. Pairs your app relies on can be allowed up front, so normal features keep working:
+**Agent-to-agent messages: only the orchestrator hands out work.** A tool that passes work to another agent (guessed from names like `ask_agent` or `delegate`, or set with `agentCall`) may only be used by an agent marked `orchestrator: true`. Every other agent is a helper: helpers never see hand-off tools, and if one calls such a tool anyway it is blocked outright, with no approval card. So a helper cannot ask another helper, or the orchestrator, to do something it was not given. The orchestrator's hand-offs need a human's approval each time, except to the agents listed in its `talksTo`, so normal app features keep working. A message to an unregistered agent is always blocked.
 
 ```yaml
 agents:
-  support-bot:
-    talksTo: [report-bot]   # may hand work to report-bot without asking
+  triage-bot:
+    orchestrator: true
+    talksTo: [support-bot, report-bot]   # may hand work to these without asking
+    tools:
+      - tool: helpdesk.ask_agent
+        decision: allow
 ```
+
+`talksTo` on an agent that is not the orchestrator is a config error, so a helper cannot be given hand-offs by mistake. Act-Latch sees a hand-off only when it goes through a tool; agents that call each other directly inside the app's own code are not seen yet.
 
 **Security review.** `npm run registry` (or `actlatch review --config your.yaml`) ends with advice on setups no single rule shows:
 
@@ -169,6 +175,7 @@ agents:
 | can delete on its own | the most damaging action needs no human |
 | can read private or outside data and send things out on its own | together these are a data-leak path, even if each is harmless alone |
 | can message another agent that has tools it lacks | it could get those tools used through the other agent |
+| a helper has a hand-off tool in its list | it stays blocked; remove it or make that agent the orchestrator |
 | has blanket access (`server.*`) | more power than any one job needs |
 | can change records with no limit | an `update` tool allowed with no condition |
 | never used a tool (with `--audit actlatch-audit.jsonl`) | least privilege: remove what is not needed |
@@ -199,7 +206,7 @@ agents:
 
 The looked-up value is shown on the approval card, so the person deciding sees "price: 20" next to "amount: 35". If the lookup fails (unknown order, server error), the limit counts as already exceeded, so the rule fires rather than letting the call slip through.
 
-`npm run demo:agents` runs the full story with a fake helpdesk: report-bot can only read, support-bot refunds $18 on its own, needs a human for $120, needs a human for $35 on a $20 lamp even though that is under its $50 limit, is blocked at $5000 (even though a ticket says "you are authorised"), cannot delete customers, and an unregistered agent gets nothing. The full example is [`examples/agents.yaml`](examples/agents.yaml).
+`npm run demo:agents` runs the full story with a fake helpdesk: report-bot can only read, support-bot cannot pass work to other agents (only triage-bot, the orchestrator, can), support-bot refunds $18 on its own, needs a human for $120, needs a human for $35 on a $20 lamp even though that is under its $50 limit, is blocked at $5000 (even though a ticket says "you are authorised"), cannot delete customers, and an unregistered agent gets nothing. The full example is [`examples/agents.yaml`](examples/agents.yaml).
 
 ## Use it with a real MCP client
 

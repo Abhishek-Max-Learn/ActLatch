@@ -9,7 +9,7 @@ import type { ApprovalOutcome, Approver } from "../src/approval.js";
 import { AuditLog } from "../src/audit.js";
 import { parseConfig } from "../src/config.js";
 import { Gateway, type ConnectedUpstream } from "../src/gateway.js";
-import { decide } from "../src/registry.js";
+import { canSee, decide } from "../src/registry.js";
 import { reviewRegistry, renderReview } from "../src/review.js";
 import { runSetup } from "../src/setup.js";
 import { guessAccess, toolProfile } from "../src/tools.js";
@@ -55,6 +55,7 @@ const raw = {
   upstreams: { helpdesk: { command: "x", trust: "untrusted" } },
   agents: {
     "support-bot": {
+      orchestrator: true,
       tools: [
         { tool: "helpdesk.list_tickets", decision: "allow" },
         { tool: "helpdesk.reply_ticket", decision: "allow" },
@@ -62,6 +63,7 @@ const raw = {
       ],
       talksTo: ["report-bot"],
     },
+    "helper-bot": { tools: [{ tool: "helpdesk.ask_agent", decision: "allow" }] },
     "report-bot": { tools: [{ tool: "helpdesk.list_tickets", decision: "allow" }] },
     "admin-bot": { tools: [{ tool: "helpdesk.delete_customer", decision: "allow" }] },
   },
@@ -82,6 +84,23 @@ describe("agent-to-agent messages", () => {
 
   it("never loosens a block", () => {
     expect(decide(config, "report-bot", "helpdesk.ask_agent", ask("support-bot")).decision).toBe("deny");
+  });
+
+  it("blocks helpers from passing work to any agent, even with the tool in their list", () => {
+    for (const target of ["report-bot", "support-bot", "admin-bot"]) {
+      expect(decide(config, "helper-bot", "helpdesk.ask_agent", ask(target))).toEqual({
+        decision: "deny",
+        reason: "helper-bot is a helper agent; only an orchestrator may pass work to other agents",
+      });
+    }
+    expect(decide(config, "helper-bot", "helpdesk.ask_agent", {}).decision).toBe("deny");
+    expect(decide(config, "report-bot", "helpdesk.ask_agent", ask("support-bot")).reason).toContain("only an orchestrator");
+    expect(canSee(config, "helper-bot", "helpdesk.ask_agent")).toBe(false);
+    expect(canSee(config, "support-bot", "helpdesk.ask_agent")).toBe(true);
+  });
+
+  it("refuses talksTo on a helper", () => {
+    expect(() => parseConfig({ ...raw, agents: { ...raw.agents, "report-bot": { tools: [], talksTo: ["support-bot"] } } })).toThrow(/only for an orchestrator/);
   });
 
   it("holds the message at the gateway until a human approves", async () => {
@@ -130,6 +149,10 @@ describe("review", () => {
     expect(t).toContainEqual('medium support-bot may talk to "nobody", which is not a registered agent.');
   });
 
+  it("flags a hand-off tool given to a helper", () => {
+    expect(texts(config)).toContainEqual(expect.stringMatching(/^low helper-bot has helpdesk\.ask_agent in its list, but only an orchestrator/));
+  });
+
   it("flags blanket access and permissions never used", () => {
     const cfg = parseConfig({ upstreams: { helpdesk: { command: "x" } }, agents: { greedy: { tools: [{ tool: "helpdesk.*", decision: "allow" }] } } });
     const audit = [{ event: "call", agent: "greedy", tool: "helpdesk.list_tickets" }];
@@ -147,7 +170,7 @@ describe("review", () => {
 
 describe("setup asks about agent-to-agent messages", () => {
   it("saves pre-approved pairs and shows the review before saving", async () => {
-    const answers = ["Support Bot", "helps", "1,4", "", "yes", "Report Bot, report-bot", "", "yes"];
+    const answers = ["Support Bot", "helps", "1,4", "", "yes", "yes", "Report Bot, report-bot", "", "yes"];
     const said: string[] = [];
     const result = (await runSetup({
       raw: { upstreams: { helpdesk: { command: "x" } } },
@@ -155,7 +178,22 @@ describe("setup asks about agent-to-agent messages", () => {
       ask: async () => answers.shift() ?? "",
       say: (l) => said.push(l),
     })) as Record<string, any>;
-    expect(result.agents["support-bot"].talksTo).toEqual(["report-bot"]);
+    expect(result.agents["support-bot"]).toMatchObject({ orchestrator: true, talksTo: ["report-bot"] });
     expect(said.join("\n")).toContain("Review");
+  });
+
+  it("blocks hand-offs for an agent that is not the orchestrator", async () => {
+    const answers = ["Reader", "reads", "1,4", "", "yes", "no", "", "yes"];
+    const said: string[] = [];
+    const result = (await runSetup({
+      raw: { upstreams: { helpdesk: { command: "x" } } },
+      tools,
+      ask: async () => answers.shift() ?? "",
+      say: (l) => said.push(l),
+    })) as Record<string, any>;
+    expect(result.agents.reader.orchestrator).toBeUndefined();
+    expect(result.agents.reader.talksTo).toBeUndefined();
+    expect(said.join("\n")).toContain("reader cannot pass work to other agents");
+    expect(said.join("\n")).toContain("Passing work to other agents: blocked");
   });
 });

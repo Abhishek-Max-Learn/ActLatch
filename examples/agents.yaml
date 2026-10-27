@@ -1,5 +1,5 @@
 # Act-Latch agent registry example. Not about email: a customer-support
-# helpdesk with two agents. Paths are relative to this file.
+# helpdesk with an orchestrator and three helper agents. Paths are relative to this file.
 #
 #   See the registry:   npm run registry
 #   Run for one agent:  actlatch start --config examples/agents.yaml --agent support-bot
@@ -16,6 +16,20 @@ upstreams:
 # tool lets it do. First matching line wins. Anything not listed is blocked,
 # and an agent that is not listed here gets nothing at all.
 agents:
+  # The boss agent. Only an orchestrator may pass work to other agents; helpers
+  # that try are blocked and never even see the hand-off tool.
+  triage-bot:
+    description: Orchestrator; decides which agent handles each ticket
+    orchestrator: true
+    tools:
+      - tool: helpdesk.list_tickets
+        decision: allow
+      - tool: helpdesk.ask_agent
+        decision: allow
+    # May hand work to these agents without asking. Hand-offs to any other
+    # agent need a human's approval.
+    talksTo: [support-bot, report-bot]
+
   support-bot:
     description: Answers customer tickets
     # Uncomment to require a secret, so another program cannot pretend to be
@@ -44,12 +58,7 @@ agents:
         reason: Refunds over $50 need a human.
       - tool: helpdesk.refund_order
         decision: allow
-      - tool: helpdesk.ask_agent
-        decision: allow
       # delete_customer is not listed, so support-bot can never use it.
-    # support-bot may hand work to report-bot without asking. Messages to any
-    # other agent need a human's approval.
-    talksTo: [report-bot]
 
   report-bot:
     description: Writes a weekly summary; read-only

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Config, Rule } from "./config.js";
 import { globMatch } from "./policy.js";
-import { toolProfile, type ToolProfile } from "./tools.js";
+import { isAgentTool, toolProfile, type ToolProfile } from "./tools.js";
 
 /**
  * Review the registry for risky setups that no single rule shows: more power
@@ -89,6 +89,18 @@ export function reviewRegistry({ config, tools, audit }: ReviewInput): Finding[]
           level: risky ? "high" : "medium",
           agent: name,
           text: `can message ${other} without approval, and ${other} can use tools ${name} cannot (${list(extra)}). ${name} could get them done through ${other}.`,
+        });
+      }
+    }
+
+    // 3b. A helper given a hand-off tool: it stays hidden and blocked, so say so.
+    if (!agent.orchestrator) {
+      const handoff = usable.filter((id) => isAgentTool(config, id));
+      if (handoff.length) {
+        out.push({
+          level: "low",
+          agent: name,
+          text: `has ${list(handoff)} in its list, but only an orchestrator may pass work to other agents, so it stays blocked. Remove it, or mark ${name} as the orchestrator.`,
         });
       }
     }
