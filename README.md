@@ -14,6 +14,8 @@ Act-Latch is an [MCP](https://modelcontextprotocol.io) gateway. Your agent (Clau
 
 Everything is written to a tamper-evident audit log.
 
+**Guides:** [Configuration guide](docs/CONFIGURATION.md) (step by step, every setting) · [Security design](docs/SECURITY-DESIGN.md) (architecture diagram, threats, known limits)
+
 ```
  Agent ──MCP──▶ Act-Latch ──MCP──▶ mail server (holds MAIL_API_KEY)
                   │  policy.yaml (frozen at startup)
