@@ -112,6 +112,30 @@ When a request needs a human, Act-Latch opens the approval page in your browser 
 
 Always open the full link, including the `?token=...` part. Each start prints a new one.
 
+### Several agents, one approval page
+
+Each agent starts its own Act-Latch, and by default each one wants the approval page on port 4848, so the second one fails to start. Give them all the same secret key:
+
+```bash
+export ACTLATCH_APPROVAL_TOKEN=$(openssl rand -hex 32)   # once; at least 32 characters
+```
+
+Start every agent's Act-Latch with that variable set. The first one shows the page; the others send their requests to it, so one page shows every agent's requests. If the first one stops, the next request moves the page to another one. The link stays the same, because the key does.
+
+### Showing the page from your own app
+
+When your app runs on a server (for example a free cloud host that gives you one public address), let your app pass `/actlatch/` on to Act-Latch's page at `http://127.0.0.1:4848/`, removing the `/actlatch` part. The page only uses relative links, so it works under any path. Then tell Act-Latch its public address, so the links it prints are the right ones:
+
+```bash
+export ACTLATCH_APPROVAL_URL=https://your-app.example.com/actlatch/
+```
+
+(or `publicUrl:` under `approval:` in the settings file). Keep Act-Latch itself on `127.0.0.1`. Once the page is on the internet, the key is the only thing protecting it, so:
+
+- use HTTPS only;
+- keep `ACTLATCH_APPROVAL_TOKEN` in your host's secret settings, never in code, a prompt, or anything an agent can read;
+- share the link only with the people who should approve, and change the key if it leaks.
+
 ## Step 6: read the diary
 
 ```bash
@@ -236,6 +260,7 @@ approval:
   port: 4848
   timeoutSeconds: 300      # no answer in time = Deny
   openBrowser: true        # open the page by itself when needed
+  # publicUrl: https://your-app.example.com/actlatch/   # when your app shows the page, see Step 5
 audit:
   path: actlatch-audit.jsonl   # contains full request details; keep it private
 ```
@@ -246,6 +271,8 @@ audit:
 |---|---|
 | `ACTLATCH_AGENT` | The agent's name, instead of `--agent`. |
 | `ACTLATCH_AGENT_KEY` | The agent's secret, when its entry has a `key`. |
+| `ACTLATCH_APPROVAL_TOKEN` | A fixed approval-page key (32+ characters), so several agents share one page. Keep it secret. |
+| `ACTLATCH_APPROVAL_URL` | The approval page's public address, when your app shows it. |
 | `ACTLATCH_LLM_URL`, `_KEY`, `_MODEL` | Setup's AI helper on any OpenAI-style API. |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Setup's AI helper. |
 | `ACTLATCH_LLM=off` | Turn the AI helper off (same as `--no-ai`). |
@@ -256,6 +283,7 @@ audit:
 | You see | Fix |
 |---|---|
 | `Forbidden` on the approval page | Open the full link with `?token=...`. Each start prints a new one. |
+| `port 4848 is already in use` | Another Act-Latch has the page. Give every agent the same `ACTLATCH_APPROVAL_TOKEN`, see Step 5. |
 | `agent "x" is not registered` | Add the agent under `agents`, or fix the `--agent` name. |
 | `... is not in x's tool list` | Add a rule for that tool to the agent, if it really needs it. |
 | `x is a helper agent; only an orchestrator may pass work to other agents` | Working as designed. Route the work through the orchestrator. |

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Preview } from "./preview.js";
 
 export type ApprovalOutcome = "approved" | "denied" | "timeout";
@@ -30,7 +30,20 @@ export interface ApprovalOptions {
   timeoutSeconds: number;
   /** Open the page in the browser when a decision is needed and no page is open. */
   openBrowser?: boolean;
+  /**
+   * The address people use to reach the page, when another app passes it on (for example
+   * https://my-app.example.com/actlatch/). Links then point there instead of localhost.
+   */
+  publicUrl?: string;
+  /**
+   * A fixed secret key instead of a new random one each run. Every Act-Latch started with the
+   * same key and port shares one approval page: the first one shows it, the others send it their requests.
+   */
+  token?: string;
 }
+
+/** The smallest shared key we accept: as hard to guess as the random one. */
+export const MIN_TOKEN_LENGTH = 32;
 
 /**
  * Local approval page. It binds to localhost and every request needs a random
@@ -39,16 +52,26 @@ export interface ApprovalOptions {
  * While the page is open it pops up each new request by itself.
  */
 export class WebApprover implements Approver {
-  readonly token = randomBytes(16).toString("hex");
+  readonly token: string;
   private readonly pending = new Map<string, Pending>();
   private server?: Server;
   private lastSeen = 0; // when an open page last checked in
+  /** Another Act-Latch already shows the page on our port; we send it our requests. */
+  private relaying = false;
 
   constructor(
     private readonly opts: ApprovalOptions,
     private readonly log: (msg: string) => void = (m) => process.stderr.write(m + "\n"),
     private readonly open: (url: string) => boolean = openInBrowser,
-  ) {}
+  ) {
+    if (opts.token !== undefined && opts.token.length < MIN_TOKEN_LENGTH) {
+      throw new Error(`the approval key must be at least ${MIN_TOKEN_LENGTH} characters long`);
+    }
+    if (opts.publicUrl !== undefined && !/^https?:$/.test(new URL(opts.publicUrl).protocol)) {
+      throw new Error("the approval page address must start with http:// or https://");
+    }
+    this.token = opts.token ?? randomBytes(16).toString("hex");
+  }
 
   get url(): string {
     const addr = this.server?.address();
@@ -56,8 +79,17 @@ export class WebApprover implements Approver {
     return `http://${this.opts.host}:${port}/?token=${this.token}`;
   }
 
-  /** The link to open in a browser. Inside GitHub Codespaces this is the forwarded port's URL. */
+  /**
+   * The link to open in a browser: the public address when one is set, inside GitHub Codespaces
+   * the forwarded port's URL, otherwise the local one.
+   */
   get browserUrl(): string {
+    if (this.opts.publicUrl) {
+      const u = new URL(this.opts.publicUrl);
+      if (!u.pathname.endsWith("/")) u.pathname += "/";
+      u.search = `?token=${this.token}`;
+      return u.toString();
+    }
     const { CODESPACE_NAME: name, GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: domain } = process.env;
     if (!name || !domain) return this.url;
     const port = new URL(this.url).port;
@@ -70,12 +102,33 @@ export class WebApprover implements Approver {
   }
 
   async start(): Promise<void> {
-    this.server = createServer((req, res) => this.handle(req, res));
-    await new Promise<void>((ok, fail) => {
-      this.server!.once("error", fail);
-      this.server!.listen(this.opts.port, this.opts.host, ok);
-    });
+    try {
+      await this.listen();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE") throw err;
+      if (!this.opts.token) {
+        throw new Error(
+          `port ${this.opts.port} is already in use. If another Act-Latch is using it, give them all the same ` +
+            `ACTLATCH_APPROVAL_TOKEN so they share one approval page, or set a different approval port.`,
+        );
+      }
+      this.relaying = true;
+      this.log(`[actlatch] approvals go to the approval page already running on port ${this.opts.port}: ${this.browserUrl}`);
+      return;
+    }
     this.log(`[actlatch] approvals: ${this.browserUrl}`);
+  }
+
+  private async listen(): Promise<void> {
+    const server = createServer((req, res) => this.handle(req, res));
+    // A shared page holds a request from another Act-Latch open until a person decides.
+    server.requestTimeout = 0;
+    await new Promise<void>((ok, fail) => {
+      server.once("error", fail);
+      server.listen(this.opts.port, this.opts.host, ok);
+    });
+    this.server = server;
+    this.relaying = false;
   }
 
   async stop(): Promise<void> {
@@ -104,7 +157,66 @@ export class WebApprover implements Approver {
   }
 
   request(req: Omit<ApprovalRequest, "id" | "createdAt">): Promise<{ id: string; outcome: ApprovalOutcome }> {
-    const id = randomUUID();
+    return this.relaying ? this.relay(req) : this.ask(req);
+  }
+
+  /** Send the request to the Act-Latch that shows the shared page and wait for the person's answer. */
+  private async relay(req: Omit<ApprovalRequest, "id" | "createdAt">): Promise<{ id: string; outcome: ApprovalOutcome }> {
+    const what = req.preview.headline ?? req.preview.tool;
+    this.log(`[actlatch] approval needed: ${what}. Open this link to decide: ${this.browserUrl}`);
+    try {
+      return await this.post(req);
+    } catch (err) {
+      // The Act-Latch that showed the page has stopped: show it from here instead.
+      if ((err as NodeJS.ErrnoException).code === "ECONNREFUSED") {
+        try {
+          await this.listen();
+          this.log(`[actlatch] the shared approval page moved here: ${this.browserUrl}`);
+          return this.ask(req);
+        } catch {
+          // someone else took the port first: try sending to them once more
+          try {
+            return await this.post(req);
+          } catch {}
+        }
+      }
+      this.log(`[actlatch] could not reach the shared approval page, so the action is blocked`);
+      return { id: randomUUID(), outcome: "timeout" };
+    }
+  }
+
+  private post(req: Omit<ApprovalRequest, "id" | "createdAt">): Promise<{ id: string; outcome: ApprovalOutcome }> {
+    const body = JSON.stringify({ actionHash: req.actionHash, reason: req.reason, preview: req.preview });
+    return new Promise((resolve, reject) => {
+      const r = httpRequest(
+        {
+          host: this.opts.host,
+          port: this.opts.port,
+          method: "POST",
+          path: `/api/relay?token=${this.token}`,
+          headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+        },
+        (res) => {
+          let text = "";
+          res.setEncoding("utf8");
+          res.on("data", (c: string) => (text += c));
+          res.on("end", () => {
+            try {
+              const out = JSON.parse(text) as { id: string; outcome: ApprovalOutcome };
+              if (res.statusCode !== 200 || !["approved", "denied", "timeout"].includes(out.outcome)) throw new Error();
+              resolve(out);
+            } catch {
+              reject(new Error(`the shared approval page answered ${res.statusCode}`));
+            }
+          });
+        },
+      );
+      r.on("error", reject);
+      r.end(body);
+    });
+  }
+
+  private ask(req: Omit<ApprovalRequest, "id" | "createdAt">, id: string = randomUUID()): Promise<{ id: string; outcome: ApprovalOutcome }> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -158,10 +270,15 @@ export class WebApprover implements Approver {
       res.writeHead(204).end();
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/relay") {
+      this.acceptRelay(req, res);
+      return;
+    }
     const m = /^\/(approve|deny)\/([0-9a-f-]+)$/.exec(url.pathname);
     if (req.method === "POST" && m) {
       const ok = this.decide(m[2]!, m[1] === "approve" ? "approved" : "denied");
-      res.writeHead(ok ? 303 : 404, { location: `/?token=${this.token}` }).end();
+      // Relative, so it also works when another app shows the page under its own path.
+      res.writeHead(ok ? 303 : 404, { location: `../?token=${this.token}` }).end();
       return;
     }
     if (req.method === "GET" && url.pathname === "/") {
@@ -171,7 +288,42 @@ export class WebApprover implements Approver {
     }
     res.writeHead(404).end();
   }
+
+  /** Another Act-Latch with our key sends a request; answer once a person decides. */
+  private acceptRelay(req: IncomingMessage, res: ServerResponse): void {
+    let text = "";
+    let size = 0;
+    req.setEncoding("utf8");
+    req.on("data", (c: string) => {
+      size += Buffer.byteLength(c);
+      if (size > MAX_RELAY_BYTES) req.destroy();
+      else text += c;
+    });
+    req.on("end", () => {
+      let body: Omit<ApprovalRequest, "id" | "createdAt">;
+      try {
+        body = JSON.parse(text);
+        const p = body.preview as unknown as Record<string, unknown>;
+        const ok =
+          typeof body.actionHash === "string" && typeof body.reason === "string" && p && typeof p === "object" &&
+          typeof p.tool === "string" && Array.isArray(p.summary);
+        if (!ok) throw new Error();
+      } catch {
+        res.writeHead(400).end();
+        return;
+      }
+      const id = randomUUID();
+      void this.ask(body, id).then((out) => {
+        if (!res.writableEnded) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(out));
+      });
+      // If the other Act-Latch stops waiting, the card has nobody to answer for: take it down.
+      res.on("close", () => this.decide(id, "denied"));
+    });
+  }
 }
+
+/** Largest request another Act-Latch may send us. A preview is small; this stops floods. */
+const MAX_RELAY_BYTES = 256 * 1024;
 
 /**
  * Open a URL in the person's browser. Inside VS Code and Codespaces terminals
@@ -262,7 +414,7 @@ function card(r) {
 }
 async function decide(id, what) {
   const r = items.find((x) => x.id === id);
-  await fetch("/" + what + "/" + id + "?token=" + token, { method: "POST", redirect: "manual" }).catch(() => {});
+  await fetch(what + "/" + id + "?token=" + token, { method: "POST", redirect: "manual" }).catch(() => {});
   if (popped === id) { popped = null; overlay.hidden = true; }
   const d = el("div", what === "approve" ? "done" : "done no", (what === "approve" ? "Done: you approved " : "Done: you denied ") + "\u201c" + (r ? r.preview.headline || r.preview.tool : "the request") + "\u201d.");
   d.append(el("p", "", what === "approve" ? "The action is going ahead now." : "The action was blocked and the agent was told not to try another way."));
@@ -295,7 +447,7 @@ function beep() {
 }
 async function poll() {
   try {
-    const res = await fetch("/api/pending?token=" + token, { cache: "no-store" });
+    const res = await fetch("api/pending?token=" + token, { cache: "no-store" });
     if (!res.ok) throw new Error();
     items = await res.json(); base = Date.now();
     if (items.length) document.getElementById("done").replaceChildren();
@@ -309,7 +461,7 @@ if ("Notification" in window && Notification.permission === "default") {
   alertsBtn.onclick = () => Notification.requestPermission().then(() => { alertsBtn.hidden = true; });
 }
 overlay.onclick = (e) => { if (e.target === overlay) { overlay.hidden = true; popped = null; } };
-addEventListener("pagehide", () => navigator.sendBeacon("/api/closed?token=" + token));
+addEventListener("pagehide", () => navigator.sendBeacon("api/closed?token=" + token));
 poll(); setInterval(poll, 2000);
 </script></body></html>`;
 

@@ -122,6 +122,9 @@ export const ConfigSchema = z
         timeoutSeconds: z.number().positive().default(300),
         // Open the approval page in the browser when a decision is needed and it is not already open.
         openBrowser: z.boolean().default(true),
+        // The address people open when your own app shows the page (for example under /actlatch/).
+        // ACTLATCH_APPROVAL_URL overrides it.
+        publicUrl: z.string().url().optional(),
       })
       .strict()
       .default({ host: "127.0.0.1", port: 4848, timeoutSeconds: 300, openBrowser: true }),
