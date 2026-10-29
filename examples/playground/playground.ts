@@ -4,7 +4,7 @@
 //   npm run playground                      open the page and give the team a job
 //   npm run playground -- --once "<job>"    run one job in the terminal (add --approve or --deny)
 //
-// AI keys: GROQ_API_KEY, GEMINI_API_KEY, XAI_API_KEY or OPENAI_API_KEY, or ACTLATCH_LLM_URL
+// AI keys: ANTHROPIC_API_KEY (Claude), GROQ_API_KEY, GEMINI_API_KEY, XAI_API_KEY or OPENAI_API_KEY, or ACTLATCH_LLM_URL
 // (+ _KEY, _MODEL) for any OpenAI-style API such as Ollama. With none, a pretend AI is used.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -19,7 +19,7 @@ import { AuditLog } from "../../src/audit.js";
 import { loadConfig, type Config } from "../../src/config.js";
 import { Gateway, type ConnectedUpstream } from "../../src/gateway.js";
 import { createMailServer } from "../mock-email-server.js";
-import { llmBrain, pickProvider, pretendBrain, type Brain, type ToolCall, type Turn } from "./brain.js";
+import { pickBrain, type Brain, type ToolCall, type Turn } from "./brain.js";
 
 export type Verdict = "allowed" | "blocked" | "approved" | "denied";
 
@@ -342,8 +342,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const once = argv.includes("--once") ? argv[argv.indexOf("--once") + 1] : undefined;
   const auto = argv.includes("--approve") ? "approved" : argv.includes("--deny") ? "denied" : undefined;
   const config = loadConfig(join(dirname(fileURLToPath(import.meta.url)), "playground.yaml"));
-  const provider = pickProvider();
-  const brain = provider ? llmBrain(provider) : pretendBrain();
+  const brain = pickBrain();
   const approver = new WebApprover({ ...config.approval, openBrowser: !auto }, (m) => console.log(m));
   await approver.start();
   if (auto) {
