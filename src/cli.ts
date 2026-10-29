@@ -17,7 +17,9 @@ import { pickDrafter, runSetup } from "./setup.js";
 const USAGE = `usage:
   actlatch start [--config actlatch.yaml] [--agent <name>]
                                             run the gateway as an MCP server on stdio for one agent
-                                            (the agent's key, if it has one, comes from ACTLATCH_AGENT_KEY)
+                                            (the agent's key, if it has one, comes from ACTLATCH_AGENT_KEY;
+                                            ACTLATCH_APPROVAL_TOKEN lets several agents share one approval page,
+                                            ACTLATCH_APPROVAL_URL is its address when your app shows it)
   actlatch registry [--config actlatch.yaml]
                                             show every agent, the tools it can use and what each allows
   actlatch review [--config actlatch.yaml] [--audit actlatch-audit.jsonl]
@@ -40,7 +42,12 @@ async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   if (cmd === "start") {
     const config = loadConfig(flag(rest, "--config") ?? "actlatch.yaml");
-    const approver = new WebApprover(config.approval);
+    const approver = new WebApprover({
+      ...config.approval,
+      publicUrl: process.env.ACTLATCH_APPROVAL_URL || config.approval.publicUrl,
+      // A fixed key lets every agent's Act-Latch share one approval page.
+      token: process.env.ACTLATCH_APPROVAL_TOKEN || undefined,
+    });
     await approver.start();
     const identity = { agent: flag(rest, "--agent") ?? process.env.ACTLATCH_AGENT, key: process.env.ACTLATCH_AGENT_KEY };
     const gateway = new Gateway(config, await connectUpstreams(config), approver, new AuditLog(config.audit.path), identity);

@@ -126,7 +126,7 @@ sequenceDiagram
 | Agent to gateway | Gateway, rule book | The agent and everything it says | Identity fixed at process start; decisions don't read the model's words, only tool name and arguments. |
 | Gateway to upstream | Gateway | Output of `untrusted` servers (emails, web pages, tickets) | Output is passed back but never interpreted as instructions by the gateway; it marks the session so protected tools need a human. |
 | Admin to gateway | Admin's config file and environment | Nothing at runtime can edit it | Config is frozen; setup runs only on the admin's machine. |
-| Approver to gateway | Holder of the start-up token | Anything else on the machine or network | Page binds to 127.0.0.1 and needs the random token. |
+| Approver to gateway | Holder of the start-up token | Anything else on the machine or network | Page binds to 127.0.0.1 and needs the random token. With `ACTLATCH_APPROVAL_TOKEN` the key is fixed (32+ characters) and shared by the agents' gateways; other gateways send requests to the one showing the page only with that key. If an app shows the page publicly, the key is the only protection, so HTTPS and secret storage are required. |
 | Setup LLM | Admin's answers | LLM-drafted questions | Questions about fields that don't exist are dropped; the LLM never writes a decision. |
 
 ## 6. Threats and defences
@@ -139,7 +139,7 @@ sequenceDiagram
 | T4 | Privilege amplification through other agents | Email reader asks reply writer to send mail for it | Only `orchestrator: true` may use hand-off tools; helpers can't see them and are denied outright, including relaying via the orchestrator. Orchestrator hand-offs outside `talksTo` need a human. Review flags orchestrators that can reach tools they lack. | Built (PR #9) |
 | T5 | Argument tricks | 60 addresses separated by new lines; outside address listed first; `body: ["my password"]` | Addresses extracted from any shape; `matches` checks JSON text for deny/approve rules; allow rules need plain text. | Built (PR #8) |
 | T6 | Approval reuse | Approve 2 recipients, then send to 200 | Each approval is tied to a SHA-256 hash of the exact tool + arguments, for that one call. | Built |
-| T7 | Agent approves itself | Agent opens the approval URL | Localhost only + random token never given to the agent; CSP, no framing, no-referrer headers. | Built (headers in PR #8) |
+| T7 | Agent approves itself | Agent opens the approval URL | Localhost only + random token never given to the agent; CSP, no framing, no-referrer headers. A shared key must stay in the host's secrets, out of prompts and agent tools. A gateway that can't reach the shared page blocks the action. | Built (headers in PR #8) |
 | T8 | Faked numbers | "The lamp cost $35" when it cost $20 | Lookups fetch the real value from a trusted tool; failed lookup counts as over the limit. | Built |
 | T9 | Tampering with the record | Deleting the line that shows a bad send | Hash chain; `verify-audit` finds edits and deletions; file mode 0600. | Built (0600 in PR #8) |
 | T10 | Slow-down attack | Huge string of `@` signs freezes the gateway | Linear-time address parsing. | Built (PR #8) |

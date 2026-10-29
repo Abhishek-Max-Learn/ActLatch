@@ -20,5 +20,7 @@ First release.
 - Hash-chained audit log, readable with `actlatch log`.
 - Guided setup (`actlatch setup`) and a security review of risky setups (`actlatch review`).
 - Configuration guide (`docs/CONFIGURATION.md`) and security design (`docs/SECURITY-DESIGN.md`).
+- Several agents can share one approval page (`ACTLATCH_APPROVAL_TOKEN`), and an app can show the page at its own
+  address (`ACTLATCH_APPROVAL_URL` or `approval.publicUrl`), for example on a free cloud host with one public address.
 - Security hardening from a code scan: recipient and pattern rules cannot be dodged by reformatting arguments,
   approval page security headers, private audit log file.

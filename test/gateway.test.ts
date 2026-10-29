@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
 import { factLines } from "../src/preview.js";
 import { WebApprover, type ApprovalOutcome, type ApprovalRequest, type Approver } from "../src/approval.js";
@@ -223,6 +223,65 @@ describe("web approver", () => {
     expect(approver.pageOpen).toBe(true);
     await fetch(`${origin}/api/closed?token=${approver.token}`, { method: "POST" });
     expect(approver.pageOpen).toBe(false);
+  });
+
+  it("links to the public address when another app shows the page", async () => {
+    approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 10, publicUrl: "https://shield.example.com/actlatch" }, () => {});
+    await approver.start();
+    expect(approver.browserUrl).toBe(`https://shield.example.com/actlatch/?token=${approver.token}`);
+    // The page only uses relative links, so it keeps working under that path.
+    const page = await (await fetch(approver.url)).text();
+    expect(page).not.toMatch(/fetch\("\/|sendBeacon\("\//);
+    expect(() => new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 1, publicUrl: "javascript:alert(1)" })).toThrow(/http/);
+  });
+
+  it("refuses a short shared key", () => {
+    expect(() => new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 1, token: "short" })).toThrow(/at least 32/);
+  });
+
+  it("lets several agents share one approval page", async () => {
+    const token = "k".repeat(32);
+    approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 10, token }, () => {});
+    await approver.start();
+    const port = Number(new URL(approver.url).port);
+    const helperLogs: string[] = [];
+    const helper = new WebApprover({ host: "127.0.0.1", port, timeoutSeconds: 10, token }, (m) => helperLogs.push(m));
+    await helper.start();
+    expect(helperLogs[0]).toContain("already running");
+
+    const pending = helper.request({ actionHash: "h1", reason: "r", preview: { tool: "shield.alert_family", summary: [], args: {} } });
+    await vi.waitFor(() => expect(approver!.list()).toHaveLength(1));
+    const [item] = approver.list();
+    expect(item!.preview.tool).toBe("shield.alert_family");
+    approver.decide(item!.id, "approved");
+    expect((await pending).outcome).toBe("approved");
+    await helper.stop();
+  });
+
+  it("will not share a page without the same key", async () => {
+    approver = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 10 }, () => {});
+    await approver.start();
+    const port = Number(new URL(approver.url).port);
+    await expect(new WebApprover({ host: "127.0.0.1", port, timeoutSeconds: 10 }, () => {}).start()).rejects.toThrow(/ACTLATCH_APPROVAL_TOKEN/);
+    const other = new WebApprover({ host: "127.0.0.1", port, timeoutSeconds: 10, token: "z".repeat(32) }, () => {});
+    await other.start();
+    const r = await other.request({ actionHash: "h", reason: "r", preview: { tool: "t", summary: [], args: {} } });
+    expect(r.outcome).toBe("timeout"); // wrong key: blocked, never approved
+    expect(approver.list()).toHaveLength(0);
+  });
+
+  it("takes over the shared page when the first Act-Latch stops", async () => {
+    const token = "m".repeat(32);
+    const first = new WebApprover({ host: "127.0.0.1", port: 0, timeoutSeconds: 10, token }, () => {});
+    await first.start();
+    const port = Number(new URL(first.url).port);
+    approver = new WebApprover({ host: "127.0.0.1", port, timeoutSeconds: 10, token }, () => {});
+    await approver.start();
+    await first.stop();
+    const pending = approver.request({ actionHash: "h", reason: "r", preview: { tool: "t", summary: [], args: {} } });
+    await vi.waitFor(() => expect(approver!.list()).toHaveLength(1));
+    approver.decide(approver.list()[0]!.id, "denied");
+    expect((await pending).outcome).toBe("denied");
   });
 
   it("times out", async () => {
